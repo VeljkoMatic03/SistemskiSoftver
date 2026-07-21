@@ -56,6 +56,11 @@ private:
     void addRelocationOrBackpatch(const std::string& symbolName, PatchWidth width,
                                    int addend, int lineNum, const std::string& rawLine);
 
+    // converts one pending backpatch entry for the given symbol into a relocation
+    // (used when the value can't be patched directly - cross-section, W32, or still
+    // unresolved at EOF for an .extern symbol)
+    void relocateEntry(const std::string& name, const BackpatchEntry& entry);
+
     SymbolTable symtab;
     SectionManager sectionManager;
     BackpatchTable backpatch;

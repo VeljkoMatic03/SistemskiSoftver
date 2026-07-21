@@ -60,9 +60,7 @@ void Assembler::handleLabel(const std::string& name, int lineNum, const std::str
         // Directly patchable ONLY if same section AND PC-relative.
         // Absolute (W32) or cross-section -> value depends on the linker -> relocation.
         if (entry.width == PatchWidth::W32 || !sameSection) {
-            const SymbolTableEntry& sym = symtab.get(name);
-            RelocationType relType = (entry.width == PatchWidth::W32) ? RelocationType::R_32 : RelocationType::R_PC12S;
-            emitRelocation(entry.sectionId, entry.patchOffset, relType, sym.num, entry.addend);
+            relocateEntry(name, entry);
             continue;
         }
 
@@ -177,6 +175,12 @@ void Assembler::emitRelocation(int sectionId, int offset, RelocationType type, i
     relocs.push_back(reloc);
 }
 
+void Assembler::relocateEntry(const std::string& name, const BackpatchEntry& entry) {
+    const SymbolTableEntry& sym = symtab.get(name);
+    RelocationType relType = (entry.width == PatchWidth::W32) ? RelocationType::R_32 : RelocationType::R_PC12S;
+    emitRelocation(entry.sectionId, entry.patchOffset, relType, sym.num, entry.addend);
+}
+
 void Assembler::addRelocationOrBackpatch(const std::string& symbolName, PatchWidth width,
                                           int addend, int lineNum, const std::string& rawLine) {
     (void)lineNum;
@@ -220,8 +224,12 @@ void Assembler::finalizeAssembling(int lineNum, const std::string& rawLine) {
         if (sym.bind != SymbolBind::GLOBAL || sym.isDefined) {
             throw AssemblerError("nedefinisan simbol: " + name, lineNum, rawLine);
         }
-        // symbol is .extern - we leave the backpatch entries to become relocations
-        // (in this skeleton version that's not yet translated automatically - TODO)
+        // symbol is .extern and still undefined here - every pending reference to it
+        // must be resolved by the linker instead.
+        auto entries = backpatch.resolveAll(name);
+        for (const auto& entry : entries) {
+            relocateEntry(name, entry);
+        }
     }
 }
 

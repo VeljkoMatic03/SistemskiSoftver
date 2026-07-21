@@ -1,4 +1,5 @@
 .global my_symbol
+.extern a
 
 .section text
 start:
@@ -10,5 +11,7 @@ my_symbol:
     .word my_symbol
     .skip 4
     .ascii "hi"
+b:
+    .word a
 
 .end
