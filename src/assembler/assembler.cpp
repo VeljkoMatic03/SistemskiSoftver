@@ -894,7 +894,7 @@ void Assembler::writeObjectFile(const std::string& outputPath) const {
     }
 
     out << "#SYMTAB\n";
-    out << "#\tnum\tname\t\tsection\tbind\t\tvalue\t\t\tdefined\n";
+    out << "# num name section bind value defined\n";
     for (const auto& sym : symtab.allSortedByNum()) {
         out << sym.num << " " << sym.name << " " << sym.sectionId << " "
             << (sym.bind == SymbolBind::GLOBAL ? "GLOBAL" : "LOCAL") << " "
@@ -902,14 +902,14 @@ void Assembler::writeObjectFile(const std::string& outputPath) const {
     }
 
     out << "#SECTIONS\n";
-    out << "#\tnum\tname\t\tsize\n";
+    out << "# num name size\n";
     for (const auto& secName : sectionManager.order()) {
         const SectionData& sec = sectionManager.get(secName);
         out << sec.num << " " << sec.name << " " << sec.data.size() << "\n";
     }
 
     out << "#RELOCATIONS\n";
-    out << "#\tsection\toffset\ttype\t\tsymbol\taddend\n";
+    out << "# section offset type symbol addend\n";
     for (const auto& r : relocs) {
         out << r.sectionId << " " << r.offset << " "
             << (r.type == RelocationType::R_32 ? "R_32" : "R_PC12S") << " "
@@ -924,6 +924,7 @@ void Assembler::writeObjectFile(const std::string& outputPath) const {
         for (int i = 0; i < dataLen; i++) {
             char buf[4];
             std::snprintf(buf, sizeof(buf), "%02X", sec.data[i]);
+            out << buf << (((i + 1) % 4 == 0) ? '\t' : '')
             out << buf << (((i + 1) % 8 == 0) ? '\n' : ' ');
         }
         out << "\n";
