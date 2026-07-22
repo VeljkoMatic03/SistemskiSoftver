@@ -457,40 +457,24 @@ void Assembler::flushLiteralPool(int lineNum, const std::string& rawLine) {
     }
 }
 
-void Assembler::resolveWideOperand(const std::string& operand, bool memoryDirect, int lineNum,
-                                    const std::string& rawLine, std::vector<uint8_t>& instr) {
-    // Is the operand a literal (number) or a symbol?
-    bool isNumber = !operand.empty() &&
-                    ((operand[0] >= '0' && operand[0] <= '9') ||
-                     (operand[0] == '-' && operand.size() > 1));
-
-    if (isNumber) {
-        int value = std::stol(operand, nullptr, 0);
-        if (encodeDisp12(instr.data(), value)) {
-            sectionManager.appendBytes(instr);
-            return;
-        }
-        routeThroughPool(operand, memoryDirect, instr, lineNum, rawLine);
-        return;
-    }
-
-    // Symbol: ALWAYS goes through the pool, unconditionally - there is no direct/fast
-    // path here at all. sym.value is only ever a section-relative offset computed before
-    // the linker has placed that section anywhere; the true value this addressing mode
-    // needs is sectionBase + sym.value, and sectionBase is never known to the assembler,
-    // for any symbol, local or extern. Encoding sym.value directly would be wrong even
-    // when it happens to fit in 12 bits - this isn't a range problem, the quantity itself
-    // is the wrong one. (Contrast [reg + symbol]'s resolveDisplacement, where the symbol
-    // genuinely means its own offset, not an address - a different addressing mode with a
-    // different meaning for "symbol".)
-    routeThroughPool(operand, memoryDirect, instr, lineNum, rawLine);
-}
-
+// Handles ld's and st's wide operands (immediate/memory-direct literal or symbol) -
+// ALWAYS routes through the literal pool, unconditionally, even when a literal would fit
+// directly in the 12-bit Disp field. No direct/fast path here at all, by design.
+//
+// For symbols this is also a correctness requirement, not just a style choice: a symbol's
+// table entry only ever holds a section-relative offset computed before the linker has
+// placed that section anywhere; the true value this addressing mode needs is
+// sectionBase + sym.value, and sectionBase is never known to the assembler, for any
+// symbol, local or extern. Encoding sym.value directly would be wrong even when it
+// happens to fit in 12 bits - this isn't a range problem, the quantity itself is the
+// wrong one. (Contrast [reg + symbol]'s resolveDisplacement, where the symbol genuinely
+// means its own offset, not an address - a different addressing mode with a different
+// meaning for "symbol".)
 void Assembler::routeThroughPool(const std::string& operand, bool memoryDirect, std::vector<uint8_t>& instr,
                                   int lineNum, const std::string& rawLine) {
     // Rewrite to load through a nearby pool word: gpr[A] <= mem32[pc + offsetToPoolEntry]
-    // (MOD=2, regB=pc, regC=r0 so that term vanishes). regA (the destination) was already
-    // patched by the caller before resolveWideOperand was called.
+    // (MOD=2, regB=pc, regC=r0 so that term vanishes). regA (the destination) must already
+    // be patched by the caller before calling this.
     patchMod(instr.data(), 2);
     patchRegB(instr.data(), 15); // pc
     patchRegC(instr.data(), 0);  // r0, hardwired zero
@@ -695,20 +679,16 @@ void Assembler::handleLoadInstruction(const std::string& mnemonic, const std::ve
         sectionManager.appendBytes(instr);
         return;
     }
-    // $literal / $symbol -> immediate: gpr[A] <= D (MOD stays at the template default, 1;
-    // regB=r0 so gpr[A]<=gpr[B]+D collapses to gpr[A]<=D)
+    // $literal / $symbol -> immediate, always via the literal pool (see routeThroughPool -
+    // it patches MOD/regB/regC itself, unconditionally).
     if(target[0] == '$') {
         std::string operandString = target.substr(1);
-        patchRegB(instr.data(), 0);
-        resolveWideOperand(operandString, /*memoryDirect=*/false, lineNum, rawLine, instr);
+        routeThroughPool(operandString, /*memoryDirect=*/false, instr, lineNum, rawLine);
         return;
     }
-    // bare literal / symbol -> memory-direct: gpr[A] <= mem32[D] (MOD=2, regB=regC=r0 so
-    // gpr[A]<=mem32[gpr[B]+gpr[C]+D] collapses to gpr[A]<=mem32[D])
+    // bare literal / symbol -> memory-direct, always via the literal pool (see routeThroughPool).
     std::string operandString = target;
-    patchRegB(instr.data(), 0);
-    patchMod(instr.data(), 2);
-    resolveWideOperand(operandString, /*memoryDirect=*/true, lineNum, rawLine, instr);
+    routeThroughPool(operandString, /*memoryDirect=*/true, instr, lineNum, rawLine);
 }
 
 void Assembler::handleStoreInstruction(const std::string& mnemonic, const std::vector<std::string>& operands,

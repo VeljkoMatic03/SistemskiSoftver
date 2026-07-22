@@ -94,18 +94,12 @@ private:
                               int sign, std::vector<uint8_t>& instr);
 
     // resolves a $literal/$symbol (immediate, memoryDirect=false) or bare literal/symbol
-    // (memory-direct, memoryDirect=true) operand for ld/st. Tries to encode the value
-    // directly into the 12-bit Disp field; on failure (too big, or a symbol not yet known
-    // to be small), falls back to the literal pool instead of erroring - unlike
-    // resolveDisplacement, this addressing mode isn't spec-restricted to "must fit or
-    // error". instr is NOT yet appended; this function owns appending it either way.
-    void resolveWideOperand(const std::string& operand, bool memoryDirect, int lineNum,
-                             const std::string& rawLine, std::vector<uint8_t>& instr);
-
-    // appends instr rewritten to load through a nearby literal-pool word: gpr[A] <=
-    // mem32[pc + offsetToPoolEntry] (MOD=2, regB=pc, regC=r0). If memoryDirect, also
-    // appends a second instruction to dereference through the loaded value, since the
-    // pool read only recovers the symbol's raw address, not what's stored there.
+    // (memory-direct, memoryDirect=true) operand for ld/st: ALWAYS routes through the
+    // literal pool, unconditionally - never encodes directly into the 12-bit Disp field,
+    // even when the value would fit. instr is NOT yet appended; this function owns
+    // appending it either way. If memoryDirect, also appends a second instruction to
+    // dereference through the loaded value, since the pool read only recovers the
+    // symbol's/literal's raw address, not what's stored there.
     void routeThroughPool(const std::string& operand, bool memoryDirect, std::vector<uint8_t>& instr,
                            int lineNum, const std::string& rawLine);
 
