@@ -924,8 +924,11 @@ void Assembler::writeObjectFile(const std::string& outputPath) const {
         for (int i = 0; i < dataLen; i++) {
             char buf[4];
             std::snprintf(buf, sizeof(buf), "%02X", sec.data[i]);
-            out << buf << (((i + 1) % 4 == 0) ? '\t' : '')
-            out << buf << (((i + 1) % 8 == 0) ? '\n' : ' ');
+            
+            if((i+1) % 8 == 0) out << buf << '\n';
+            else if((i+1) % 4 == 0) out << buf << "\t\t";
+            else out << buf << ' ';
+            //out << buf << (((i + 1) % 8 == 0) ? '\n' : ' ');
         }
         out << "\n";
     }
