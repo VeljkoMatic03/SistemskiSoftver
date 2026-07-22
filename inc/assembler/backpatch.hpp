@@ -10,15 +10,19 @@
 
 // Width of the field that needs to be filled in once the symbol is resolved.
 enum class PatchWidth {
-    W32,       // .word initializer - 4 bytes, outside the instruction format
-    W12_SIGNED // Disp field inside an instruction
+    W32,        // .word initializer - 4 bytes, outside the instruction format
+    W12_SIGNED, // Disp field inside an instruction, PC-relative (branch/jmp/call targets) -
+                // may become an R_PC12S relocation if still unresolved (.extern) at EOF
+    W12_ABS     // Disp field inside an instruction, NOT PC-relative (e.g. [reg + symbol]) -
+                // never becomes a relocation; must resolve locally by EOF or it's an
+                // assembler error, regardless of .extern/.global
 };
 
 struct BackpatchEntry {
     int         sectionId;
-    int         patchOffset;  // for W32: start of the 4 bytes; for W12_SIGNED: start of the instruction
+    int         patchOffset;  // for W32/W12_SIGNED: start of the 4 bytes/instruction; same for W12_ABS
     PatchWidth  width;
-    int         addend;
+    int         addend;       // additive constant for W32/W12_SIGNED; sign multiplier (+1/-1) for W12_ABS
 };
 
 // Holds all forward references within the current file that are STILL UNRESOLVED, keyed by symbol name.
