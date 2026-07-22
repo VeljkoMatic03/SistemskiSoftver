@@ -141,7 +141,7 @@ void Assembler::handleWord(const std::vector<std::string>& args, int lineNum, co
         int offset = sectionManager.appendZeros(4); // reserve 4 bytes, placeholder = 0
 
         if (isNumber) {
-            int value = std::stoi(initItem, nullptr, 0);
+            int value = std::stol(initItem, nullptr, 0);
             uint8_t* target = sectionManager.rawPointerAt(sectionManager.currentSectionId(), offset);
             writeU32LE(target, value);
         } else {
@@ -322,7 +322,7 @@ int parseRegister(const std::string& operand, int lineNum, const std::string& ra
         throw AssemblerError("Expected register format '%rN', got: " + operand, lineNum, rawLine);
     }
     try {
-        int regNum = std::stoi(operand.substr(2));
+        int regNum = std::stol(operand.substr(2));
         if (regNum < 0 || regNum > 15) {
             throw AssemblerError("Register number out of range (0-15): " + std::to_string(regNum), lineNum, rawLine);
         }
@@ -348,7 +348,7 @@ void Assembler::resolveDisplacement(std::string operand, int lineNum, const std:
                     ((operand[0] >= '0' && operand[0] <= '9') ||
                      (operand[0] == '-' && operand.size() > 1));
     if(isNumber) {
-        int value = std::stoi(operand, nullptr, 0);
+        int value = std::stol(operand, nullptr, 0);
         value *= sign;
         if (!encodeDisp12(instr.data(), value)) {
             throw AssemblerError("literal displacement '" + operand + "' doesn't fit in 12 bits", lineNum, rawLine);
@@ -394,7 +394,7 @@ void Assembler::resolvePcRelativeOperand(const std::string& operand, int section
     if (isNumber) {
         // Fully known right now: no symbol involved, and "pc" is this instruction's own
         // offset, which we already have. No relocation/backpatch needed at all.
-        int value = std::stoi(operand, nullptr, 0);
+        int value = std::stol(operand, nullptr, 0);
         int disp = value - pc;
         uint8_t* patchAt = sectionManager.rawPointerAt(sectionId, pc);
         if (!encodeDisp12(patchAt, disp)) {
@@ -449,14 +449,10 @@ void Assembler::flushLiteralPool(int lineNum, const std::string& rawLine) {
         const std::string& label = poolEntry.first;
         const std::string& value = poolEntry.second;
 
-        // Defines the synthetic label at the current end-of-section offset - this is
-        // exactly the same bookkeeping a real user-written label goes through, which is
-        // what resolves the backpatch entry that resolvePcRelativeOperand created back
-        // when this pool slot was requested (see routeThroughPool).
-        handleLabel(label, lineNum, rawLine);
+        // we treat this as if we parsed a line of this format
+        // label: .word value
 
-        // Reuses .word's own logic verbatim: a numeric value is written directly, a
-        // symbol always gets a proper R_32 relocation (handles extern/cross-section).
+        handleLabel(label, lineNum, rawLine);
         handleWord({value}, lineNum, rawLine);
     }
 }
@@ -469,7 +465,7 @@ void Assembler::resolveWideOperand(const std::string& operand, bool memoryDirect
                      (operand[0] == '-' && operand.size() > 1));
 
     if (isNumber) {
-        int value = std::stoi(operand, nullptr, 0);
+        int value = std::stol(operand, nullptr, 0);
         if (encodeDisp12(instr.data(), value)) {
             sectionManager.appendBytes(instr);
             return;
@@ -625,19 +621,17 @@ void Assembler::handleJmpCallInstruction(const std::string& mnemonic, const std:
     if (operands.size() != 1) {
         throw AssemblerError("Invalid number of operands for '" + mnemonic + "' instruction", lineNum, rawLine);
     }
-    const int kPcRegister = 15;    // %pc is register 15 - same base register branch uses
-    const int kUnusedRegister = 0; // unconditional jump: no compare operand, regB is don't-care
-    const std::string& target = operands[0];
-
-    std::vector<uint8_t> instr = instructionOpcodes[mnemonic];
-    patchRegA(instr.data(), kPcRegister);
-    patchRegB(instr.data(), kUnusedRegister);
-
-    int sectionId = sectionManager.currentSectionId();
-    int pc = sectionManager.currentOffset();
-    sectionManager.appendBytes(instr);
-
-    resolvePcRelativeOperand(target, sectionId, pc, lineNum, rawLine);
+   std::vector<uint8_t> instr = instructionOpcodes[mnemonic];
+   if(mnemonic == "jmp") patchMod(instr.data(), 8);
+   else patchMod(instr.data(), 1);
+   patchRegA(instr.data(), 15);
+   patchRegB(instr.data(), 0);
+   int pc = sectionManager.currentOffset();
+   int sectionId = sectionManager.currentSectionId();
+   sectionManager.appendBytes(instr);
+   std::string operand = operands[0];
+   std::string literalName = requestPoolSlot(operand);
+   resolvePcRelativeOperand(literalName, sectionId, pc, lineNum, rawLine);
 }
 
 void Assembler::handleLoadInstruction(const std::string& mnemonic, const std::vector<std::string>& operands,
@@ -774,25 +768,13 @@ void Assembler::handleStoreInstruction(const std::string& mnemonic, const std::v
         return;
     }
     patchRegB(instr.data(), 0);
-    // check if operand is a literal smaller than 12 bits
-    bool isNumber = !target.empty() &&
-                    ((target[0] >= '0' && target[0] <= '9') ||
-                     (target[0] == '-' && target.size() > 1));
-    if(isNumber) {
-        int value = std::stoi(target, nullptr, 0);
-        if(value >= -2048 && value <= 2047) {
-            patchMod(instr.data(), 0);
-            encodeDisp12(instr.data(), value);
-            sectionManager.appendBytes(instr);
-            return;
-        }
-    }
-    // Too big for a direct literal, or a symbol (symbols always go through the pool here,
-    // unconditionally - see resolveWideOperand: a symbol's own offset is never the same
-    // thing as its true final address, no matter how small). Unlike ld, st's own MOD=0010
-    // is a NATIVE double dereference (mem32[mem32[gpr[A]+gpr[B]+D]]<=gpr[C]), so this needs
-    // only ONE instruction - and regC (already regSrc, set above) must stay untouched,
-    // since it's the value being written, not scratch space for the address lookup.
+    // Bare literal or symbol as a store target: always routes through the literal pool,
+    // even when a literal would fit directly in the 12-bit Disp field - st never uses
+    // MOD=0000 (direct) here, only MOD=0010 (pool), for both literals and symbols alike.
+    // Unlike ld, st's own MOD=0010 is a NATIVE double dereference
+    // (mem32[mem32[gpr[A]+gpr[B]+D]]<=gpr[C]), so this needs only ONE instruction - and
+    // regC (already regSrc, set above) must stay untouched, since it's the value being
+    // written, not scratch space for the address lookup.
     patchMod(instr.data(), 2);
     patchRegA(instr.data(), 15); // pc (regB is already r0 from above)
 
@@ -852,31 +834,29 @@ void Assembler::dispatchInstruction(const std::string& mnemonic, const std::vect
 // ============================================================
 
 void Assembler::finalizeAssembling(int lineNum, const std::string& rawLine) {
-    // Resolve any still-pending pool references (defines their synthetic labels, which
-    // resolves the backpatch entries resolvePcRelativeOperand created for them) before
-    // scanning for leftover unresolved symbols below - otherwise a pool label would look
-    // like an ordinary undefined LOCAL symbol and get reported as an error.
+    // if there are any literals that need to be stored, do that
     flushLiteralPool(lineNum, rawLine);
 
     auto remaining = backpatch.remainingSymbolNames();
     for (const auto& name : remaining) {
         auto entries = backpatch.resolveAll(name);
 
-        // W12_ABS entries are never relocatable - if one is still here, the symbol's final
-        // value was never known by the time assembly finished, which the spec requires to
-        // be a hard error, regardless of .extern/.global.
+        // this is used for regind with displ addressing, is never relocatable
+        // (defined by project)
         for (const auto& entry : entries) {
             if (entry.width == PatchWidth::W12_ABS) {
                 throw AssemblerError("final value of symbol '" + name + "' is not known at assembly time", lineNum, rawLine);
             }
         }
 
+        // GLOBAL is either global or extern, if it isnt either of those two
+        // its surely undefined
         const SymbolTableEntry& sym = symtab.get(name);
         if (sym.bind != SymbolBind::GLOBAL || sym.isDefined) {
             throw AssemblerError("nedefinisan simbol: " + name, lineNum, rawLine);
         }
-        // symbol is .extern and still undefined here - every remaining (PC-relative or
-        // absolute-word) reference to it must be resolved by the linker instead.
+
+        // these remaining are all extern so relocation entries are created for linker
         for (const auto& entry : entries) {
             relocateEntry(name, entry);
         }
