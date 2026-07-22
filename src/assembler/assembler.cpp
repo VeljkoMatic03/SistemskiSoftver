@@ -890,11 +890,11 @@ void Assembler::finalizeAssembling(int lineNum, const std::string& rawLine) {
 void Assembler::writeObjectFile(const std::string& outputPath) const {
     std::ofstream out(outputPath);
     if (!out.is_open()) {
-        throw AssemblerError("ne mogu da otvorim izlaznu datoteku: " + outputPath);
+        throw AssemblerError("output file cannot be opened: " + outputPath);
     }
 
     out << "#SYMTAB\n";
-    out << "# num name section bind value defined\n";
+    out << "#\tnum\tname\t\tsection\tbind\t\tvalue\t\t\tdefined\n";
     for (const auto& sym : symtab.allSortedByNum()) {
         out << sym.num << " " << sym.name << " " << sym.sectionId << " "
             << (sym.bind == SymbolBind::GLOBAL ? "GLOBAL" : "LOCAL") << " "
@@ -902,14 +902,14 @@ void Assembler::writeObjectFile(const std::string& outputPath) const {
     }
 
     out << "#SECTIONS\n";
-    out << "# num name size\n";
+    out << "#\tnum\tname\t\tsize\n";
     for (const auto& secName : sectionManager.order()) {
         const SectionData& sec = sectionManager.get(secName);
         out << sec.num << " " << sec.name << " " << sec.data.size() << "\n";
     }
 
     out << "#RELOCATIONS\n";
-    out << "# section offset type symbol addend\n";
+    out << "#\tsection\toffset\ttype\t\tsymbol\taddend\n";
     for (const auto& r : relocs) {
         out << r.sectionId << " " << r.offset << " "
             << (r.type == RelocationType::R_32 ? "R_32" : "R_PC12S") << " "
