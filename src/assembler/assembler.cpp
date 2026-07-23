@@ -126,6 +126,7 @@ void Assembler::handleSection(const std::vector<std::string>& args, int lineNum,
     // .section in a file, when pendingPool is necessarily still empty).
     flushLiteralPool(lineNum, rawLine);
     sectionManager.openSection(args[0]);
+    symtab.defineSection(args[0], sectionManager.currentSectionId());
 }
 
 void Assembler::handleWord(const std::vector<std::string>& args, int lineNum, const std::string& rawLine) {
@@ -216,8 +217,8 @@ void Assembler::addRelocationOrBackpatch(const std::string& symbolName, PatchWid
 // Instructions
 // ============================================================
 
-// One tag per instruction encoding shape - dispatchInstruction maps a mnemonic to its
-// shape, then calls the one Assembler method that knows how to encode that shape.
+// every instruction is translated into this, which is by switch-case delegated to 
+// the right handler
 enum class InstrShape {
     NoOp, OneOp, TwoOp, Branch, JmpCall, Load, Store, Csr
 };
@@ -315,6 +316,10 @@ int parseRegister(const std::string& operand, int lineNum, const std::string& ra
     if (operand.empty() || operand[0] != '%') {
         throw AssemblerError("Expected register operand starting with '%', got: " + operand, lineNum, rawLine);
     }
+    // %sp/%pc are aliases for %r14/%r15, not separate registers - checked before the
+    // generic '%rN' parsing below since they don't fit that shape at all.
+    if (operand == "%sp") return 14;
+    if (operand == "%pc") return 15;
     if (operand.size() < 2) {
         throw AssemblerError("Invalid register format: " + operand, lineNum, rawLine);
     }
@@ -457,19 +462,8 @@ void Assembler::flushLiteralPool(int lineNum, const std::string& rawLine) {
     }
 }
 
-// Handles ld's and st's wide operands (immediate/memory-direct literal or symbol) -
-// ALWAYS routes through the literal pool, unconditionally, even when a literal would fit
-// directly in the 12-bit Disp field. No direct/fast path here at all, by design.
-//
-// For symbols this is also a correctness requirement, not just a style choice: a symbol's
-// table entry only ever holds a section-relative offset computed before the linker has
-// placed that section anywhere; the true value this addressing mode needs is
-// sectionBase + sym.value, and sectionBase is never known to the assembler, for any
-// symbol, local or extern. Encoding sym.value directly would be wrong even when it
-// happens to fit in 12 bits - this isn't a range problem, the quantity itself is the
-// wrong one. (Contrast [reg + symbol]'s resolveDisplacement, where the symbol genuinely
-// means its own offset, not an address - a different addressing mode with a different
-// meaning for "symbol".)
+// used by ld and st for immed and memdir addressing - makes entry to literal pool
+// where it stores literal/symbol that is 32bit and should be stored/loaded
 void Assembler::routeThroughPool(const std::string& operand, bool memoryDirect, std::vector<uint8_t>& instr,
                                   int lineNum, const std::string& rawLine) {
     // Rewrite to load through a nearby pool word: gpr[A] <= mem32[pc + offsetToPoolEntry]
@@ -809,10 +803,7 @@ void Assembler::dispatchInstruction(const std::string& mnemonic, const std::vect
     }
 }
 
-// ============================================================
-// Finalization
-// ============================================================
-
+// cleanup after .end
 void Assembler::finalizeAssembling(int lineNum, const std::string& rawLine) {
     // if there are any literals that need to be stored, do that
     flushLiteralPool(lineNum, rawLine);
@@ -841,6 +832,26 @@ void Assembler::finalizeAssembling(int lineNum, const std::string& rawLine) {
             relocateEntry(name, entry);
         }
     }
+
+    finalizeRelocations();
+}
+
+// Runs once, after every symbol's final bind is settled (a .global can appear anywhere in
+// the file, even after a symbol was already used in a relocation, so this can't be decided
+// at the point each relocation is first created - see the declaration in assembler.hpp).
+void Assembler::finalizeRelocations() {
+    for (RelocationTableEntry& r : relocs) {
+        const SymbolTableEntry& sym = symtab.getByNum(r.symbolId);
+        if (sym.bind == SymbolBind::LOCAL) {
+            // Guaranteed defined: a LOCAL symbol still undefined at EOF is already a hard
+            // assembler error (see the undefined-symbol check just above), so every
+            // LOCAL-bind entry reaching this point has a real section+value.
+            const SectionData& sec = sectionManager.getById(sym.sectionId);
+            const SymbolTableEntry& sectionSym = symtab.get(sec.name);
+            r.symbolId = sectionSym.num;
+            r.addend += sym.value;
+        }
+    }
 }
 
 // ============================================================
@@ -854,11 +865,13 @@ void Assembler::writeObjectFile(const std::string& outputPath) const {
     }
 
     out << "#SYMTAB\n";
-    out << "# num name section bind value defined\n";
+    out << "# num name section bind value defined type\n";
     for (const auto& sym : symtab.allSortedByNum()) {
+        const char* typeStr = sym.type == SymbolType::SEC ? "SEC"
+                             : sym.type == SymbolType::SYM ? "SYM" : "UND";
         out << sym.num << " " << sym.name << " " << sym.sectionId << " "
             << (sym.bind == SymbolBind::GLOBAL ? "GLOBAL" : "LOCAL") << " "
-            << sym.value << " " << (sym.isDefined ? "1" : "0") << "\n";
+            << sym.value << " " << (sym.isDefined ? "1" : "0") << " " << typeStr << "\n";
     }
 
     out << "#SECTIONS\n";
@@ -891,5 +904,152 @@ void Assembler::writeObjectFile(const std::string& outputPath) const {
             //out << buf << (((i + 1) % 8 == 0) ? '\n' : ' ');
         }
         out << "\n";
+    }
+}
+
+struct StringPoolEntry {
+    std::string name;
+    int offset;
+};
+
+void writeWord (int value, std::ofstream& out) {
+    uint8_t bytes[4];
+    writeU32LE(bytes, value);
+    out.write(reinterpret_cast<const char*>(bytes), 4);
+}
+
+void Assembler::writeBinaryObjectFile(const std::string& outputPath) const {
+    // header consists of: symtable offset (4B) symtable count (4B)
+    // section tab offset (4B) section tab count (4B)
+    // relocation tab offset (4B) relocation tab count (4B)
+    // string pool offset (4B)
+    // offset of data memory of each individual section is stored in one
+    // row of section table
+
+    std::vector<SymbolTableEntry> symbolEntries = symbolTable().allSortedByNum();
+    std::vector<std::string> sectionNames = sections().order();
+    std::vector<RelocationTableEntry> reltab = relocations();
+
+    int symtabOffset = HEADER_SIZE;
+    int symtabCount = static_cast<int>(symbolEntries.size());
+    int sectabOffset = symtabOffset + symtabCount * SYMTAB_SIZE;
+    int sectabCount = static_cast<int>(sectionNames.size());
+    int reltabOffset = sectabOffset + sectabCount * SECTAB_SIZE;
+    int reltabCount = static_cast<int>(reltab.size());
+    // Raw section data lives right after the relocation table, and the string pool comes
+    // after THAT (its own offset is computed once we know the total data size below) -
+    // there is no room for raw section bytes if the string pool started here instead.
+    int dataRegionOffset = reltabOffset + reltabCount * RELTAB_SIZE;
+
+    // populate string pool (deduplicated: a section name and a symbol name that happen to
+    // be equal, or a name used twice, share a single string-pool entry)
+    int currentStringOffset = 0;
+    std::vector<StringPoolEntry> stringPool;
+    std::unordered_map<std::string, int> stringContained;
+    for (const std::string& name : sectionNames) {
+        if (stringContained.find(name) == stringContained.end()) {
+            stringContained[name] = stringPool.size();
+            stringPool.push_back(StringPoolEntry{name, currentStringOffset});
+            currentStringOffset += name.size() + 1;
+        }
+    }
+    for (const SymbolTableEntry& sym : symbolEntries) {
+        if (stringContained.find(sym.name) == stringContained.end()) {
+            stringContained[sym.name] = stringPool.size();
+            stringPool.push_back(StringPoolEntry{sym.name, currentStringOffset});
+            currentStringOffset += sym.name.size() + 1;
+        }
+    }
+
+    std::vector<BinarySymbolTableEntry> binarySymTab;
+    for (const SymbolTableEntry& sym : symbolEntries) {
+        BinarySymbolTableEntry bste;
+        bste.num = sym.num;
+        bste.sectionId = sym.sectionId;
+        bste.bind = static_cast<int>(sym.bind);
+        bste.value = sym.value;
+        bste.defined = static_cast<int>(sym.isDefined);
+        bste.type = static_cast<int>(sym.type);
+        bste.nameOffset = stringPool[stringContained[sym.name]].offset;
+        binarySymTab.push_back(bste);
+    }
+
+    // Section records: dataOffset is filled in as we go, tracking a running offset through
+    // the raw-data region - the same order this loop visits sections in is the order the
+    // raw bytes get written in further down, so the two stay consistent.
+    std::vector<BinarySectionTableEntry> binarySecTab;
+    int currentDataOffset = dataRegionOffset;
+    for (const std::string& sectionName : sectionNames) {
+        const SectionData& sd = sections().get(sectionName);
+        BinarySectionTableEntry bste;
+        bste.num = sd.num;
+        bste.nameOffset = stringPool[stringContained[sd.name]].offset;
+        bste.size = sd.data.size();
+        bste.dataOffset = currentDataOffset;
+        currentDataOffset += bste.size;
+        binarySecTab.push_back(bste);
+    }
+    int stringPoolOffset = currentDataOffset; // right past the last section's raw data
+
+    std::vector<BinaryRelocationTableEntry> binaryRelTab;
+    for (const RelocationTableEntry& r : reltab) {
+        BinaryRelocationTableEntry brte;
+        brte.sectionId = r.sectionId;
+        brte.symbolNum = r.symbolId;
+        brte.offset = r.offset;
+        brte.addend = r.addend;
+        brte.relocationType = static_cast<int>(r.type);
+        binaryRelTab.push_back(brte);
+    }
+
+    // filled string pool and all three relevant tables - now write everything out, in the
+    // same order the offsets above were computed in.
+    std::ofstream out(outputPath, std::ios::binary);
+    if (!out.is_open()) {
+        throw AssemblerError("binary output file cannot be opened: " + outputPath);
+    }
+
+    writeWord(symtabOffset, out);
+    writeWord(symtabCount, out);
+    writeWord(sectabOffset, out);
+    writeWord(sectabCount, out);
+    writeWord(reltabOffset, out);
+    writeWord(reltabCount, out);
+    writeWord(stringPoolOffset, out);
+
+    for (const auto& bste : binarySymTab) {
+        writeWord(bste.num, out);
+        writeWord(bste.nameOffset, out);
+        writeWord(bste.sectionId, out);
+        writeWord(bste.bind, out);
+        writeWord(bste.value, out);
+        writeWord(bste.defined, out);
+        writeWord(bste.type, out);
+    }
+
+    for (const auto& bste : binarySecTab) {
+        writeWord(bste.num, out);
+        writeWord(bste.nameOffset, out);
+        writeWord(bste.size, out);
+        writeWord(bste.dataOffset, out);
+    }
+
+    for (const auto& brte : binaryRelTab) {
+        writeWord(brte.sectionId, out);
+        writeWord(brte.symbolNum, out);
+        writeWord(brte.offset, out);
+        writeWord(brte.addend, out);
+        writeWord(brte.relocationType, out);
+    }
+
+    for (const std::string& sectionName : sectionNames) {
+        const SectionData& sd = sections().get(sectionName);
+        if (!sd.data.empty()) {
+            out.write(reinterpret_cast<const char*>(sd.data.data()), sd.data.size());
+        }
+    }
+
+    for (const StringPoolEntry& entry : stringPool) {
+        out.write(entry.name.c_str(), entry.name.size() + 1); // include the null terminator
     }
 }

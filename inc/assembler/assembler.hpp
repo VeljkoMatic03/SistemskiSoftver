@@ -11,6 +11,7 @@
 #include "assembler/symbol_table.hpp"
 #include "utils/structs.hpp"
 
+
 class Assembler {
 public:
     Assembler() : poolCounter(0), endDirectiveSeen(false) {}
@@ -21,6 +22,7 @@ public:
 
     // dumps into .o file
     void writeObjectFile(const std::string& outputPath) const;
+    void writeBinaryObjectFile(const std::string& outputPath) const;
 
     const SymbolTable& symbolTable() const { return symtab; }
     const SectionManager& sections() const { return sectionManager; }
@@ -66,6 +68,14 @@ private:
 
     // final steps (symbol/relocation table checks)
     void finalizeAssembling(int lineNum, const std::string& rawLine);
+
+    // Rewrites every relocation that targets a LOCAL symbol to reference that symbol's own
+    // SEC entry instead, folding the symbol's own offset into the addend. Runs once, at the
+    // very end (after every .global/label has been processed and every symbol's final bind
+    // is settled) - a symbol's bind can still change via a .global appearing anywhere in the
+    // file, including after the symbol was used in a relocation, so this can't be decided
+    // eagerly at the point each relocation is first created.
+    void finalizeRelocations();
 
     // appends a relocation entry - used both for .word initializers (addRelocationOrBackpatch)
     // and for backpatch entries that turn out to need linker resolution (handleLabel)
@@ -121,5 +131,39 @@ private:
     int poolCounter;
     bool endDirectiveSeen;
 };
+
+
+// structs needed for binary file
+
+struct BinarySymbolTableEntry {
+    int num;
+    int nameOffset; // offset from string pool
+    int sectionId;
+    int bind;
+    int value;
+    int defined;
+    int type; // raw SymbolType value: UND=0, SYM=1, SEC=2
+};
+
+struct BinarySectionTableEntry {
+    int num;
+    int nameOffset; // offset from string pool
+    int size;
+    int dataOffset; // offset for data memory of this section
+};
+
+struct BinaryRelocationTableEntry {
+    int sectionId;
+    int symbolNum;
+    int offset; // where is the address in memory (relative to section base)
+                // that needs to be patched by linker
+    int addend;
+    int relocationType;
+};
+
+constexpr int HEADER_SIZE = 7 * sizeof(int);
+constexpr int SYMTAB_SIZE = sizeof(BinarySymbolTableEntry);
+constexpr int SECTAB_SIZE = sizeof(BinarySectionTableEntry);
+constexpr int RELTAB_SIZE = sizeof(BinaryRelocationTableEntry);
 
 #endif // ASSEMBLER_ASSEMBLER_HPP

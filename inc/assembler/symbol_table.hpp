@@ -31,6 +31,15 @@ public:
 
     const SymbolTableEntry& get(const std::string& name) const;
 
+    // Looks up a symbol by its num (needed to resolve a RelocationTableEntry's symbolId back
+    // to a full entry). O(n) - fine at this scale, called only during finalizeRelocations.
+    const SymbolTableEntry& getByNum(int num) const;
+
+    // Registers the auto-generated SEC symbol for a section the first time it's opened (a
+    // no-op if the section was already registered - i.e. reopened via a later .section of the
+    // same name). Throws AssemblerError if a non-section symbol with this name already exists.
+    void defineSection(const std::string& name, int sectionId);
+
     // Returns all symbols sorted by num (for serialization into the .o file).
     std::vector<SymbolTableEntry> allSortedByNum() const;
 

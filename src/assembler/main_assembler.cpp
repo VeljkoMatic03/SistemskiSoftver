@@ -26,6 +26,7 @@ int main(int argc, char** argv) {
         Assembler assembler;
         assembler.assembleFile(inputPath);
         assembler.writeObjectFile(outputPath);
+        assembler.writeBinaryObjectFile(outputPath + ".bin");
     } catch (const AssemblerError& e) {
         std::cerr << "Greska";
         if (e.line >= 0) {
