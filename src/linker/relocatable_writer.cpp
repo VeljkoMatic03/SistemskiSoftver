@@ -10,45 +10,15 @@
 #include "common/errors.hpp"
 #include "utils/structs.hpp"
 
-// Record layouts mirror Assembler::writeBinaryObjectFile exactly (see assembler.cpp) - kept as
-// local types here rather than including assembler/assembler.hpp, to keep the linker decoupled
-// from the assembler's own headers (the two components only agree on the binary format itself).
+// BinarySymbolTableEntry/BinarySectionTableEntry/BinaryRelocationTableEntry and their size
+// constants (HEADER_SIZE/SYMTAB_SIZE/SECTAB_SIZE/RELTAB_SIZE) live in utils/structs.hpp, shared
+// with the assembler's own writer - reused here as-is rather than re-declared locally.
 namespace {
-
-struct BinarySymbolTableEntry {
-    int num;
-    int nameOffset;
-    int sectionId;
-    int bind;
-    int value;
-    int defined;
-    int type;
-};
-
-struct BinarySectionTableEntry {
-    int num;
-    int nameOffset;
-    int size;
-    int dataOffset;
-};
-
-struct BinaryRelocationTableEntry {
-    int sectionId;
-    int symbolNum;
-    int offset;
-    int addend;
-    int relocationType;
-};
 
 struct StringPoolEntry {
     std::string name;
     int offset;
 };
-
-constexpr int HEADER_SIZE = 7 * sizeof(int);
-constexpr int SYMTAB_SIZE = sizeof(BinarySymbolTableEntry);
-constexpr int SECTAB_SIZE = sizeof(BinarySectionTableEntry);
-constexpr int RELTAB_SIZE = sizeof(BinaryRelocationTableEntry);
 
 void writeWord(int value, std::ofstream& out) {
     uint8_t bytes[4];
