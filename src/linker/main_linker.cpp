@@ -4,13 +4,16 @@
 #include <vector>
 
 #include "common/errors.hpp"
+#include "linker/aggregator.hpp"
+#include "linker/cli.hpp"
+#include "linker/linker.hpp"
 #include "linker/object_reader.hpp"
+#include "linker/placement.hpp"
 
-// Temporary main for this development stage: reads every input file and dumps everything it
-// parsed, in the same shape as Assembler::writeObjectFile's text output (plus the new symbol
-// `type` column), so the reader's output can be eyeballed directly against the original .o
-// text file. Aggregation/placement/relocation/CLI (-o/-hex/-relocatable/-place) come later -
-// this only exercises readBinaryObjectFile.
+// Temporary main for this development stage: parses real CLI flags, reads+aggregates every
+// input file, checks multiple definitions, and assigns base addresses - then dumps everything
+// it has so far (relocations are still unapplied, symbols' finalValue still unset - those come
+// in steps 4/6). writeHexImage/writeRelocatableObjectFile/checkUnresolved not implemented yet.
 namespace {
 
 void dumpFile(const ParsedObjectFile& file) {
@@ -60,19 +63,60 @@ void dumpFile(const ParsedObjectFile& file) {
     std::cout << "\n";
 }
 
+void dumpAggregated(const AggregatedState& state) {
+    std::cout << "#AGGREGATED\n";
+
+    std::cout << "#GLOBAL_SECTIONS\n";
+    std::cout << "# id name size baseAddress\n";
+    for (const auto& sec : state.sections) {
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "0x%08X", static_cast<unsigned>(sec.baseAddress));
+        std::cout << sec.id << " " << sec.name << " " << sec.data.size() << " " << buf << "\n";
+    }
+
+    std::cout << "#GLOBAL_SYMBOLS\n";
+    std::cout << "# name defined section value definedInFiles\n";
+    for (const auto& kv : state.symbols) {
+        const GlobalSymbol& sym = kv.second;
+        std::cout << sym.name << " " << (sym.defined ? "1" : "0") << " "
+                  << sym.definingSectionGlobalId << " " << sym.value << " [";
+        for (int i = 0; i < static_cast<int>(sym.definedInFiles.size()); i++) {
+            if (i > 0) std::cout << ",";
+            std::cout << sym.definedInFiles[i];
+        }
+        std::cout << "]\n";
+    }
+
+    std::cout << "#LINKED_RELOCATIONS\n";
+    std::cout << "# patchSection patchOffset type target\n";
+    for (const auto& lr : state.linkedRelocations) {
+        const char* typeStr = lr.type == RelocationType::R_32 ? "R_32" : "R_PC12S";
+        std::cout << lr.patchSectionId << " " << lr.patchOffset << " " << typeStr << " ";
+        if (lr.target.isSection) {
+            std::cout << "SEC(section=" << lr.target.globalSectionId
+                       << ", offset=" << lr.target.sectionOffset << ")\n";
+        } else {
+            std::cout << "GLOBAL(name=" << lr.target.globalName
+                       << ", addend=" << lr.addend << ")\n";
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cerr << "upotreba: linker <ulazna_binarna_datoteka>...\n";
-        return 1;
-    }
-
     try {
-        for (int i = 1; i < argc; i++) {
-            ParsedObjectFile file = readBinaryObjectFile(argv[i]);
+        LinkerOptions opts = parseArgs(argc, argv);
+
+        for (const std::string& path : opts.inputPaths) {
+            ParsedObjectFile file = readBinaryObjectFile(path);
             dumpFile(file);
         }
+
+        AggregatedState state = aggregate(opts.inputPaths);
+        checkMultipleDefinitions(state);
+        assignBaseAddresses(state, opts);
+        dumpAggregated(state);
     } catch (const LinkerError& e) {
         std::cerr << "Greska: " << e.what() << "\n";
         return 1;

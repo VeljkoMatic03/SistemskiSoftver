@@ -75,7 +75,7 @@ ParsedObjectFile readBinaryObjectFile(const std::string& path) {
         sym.type = static_cast<SymbolType>(readInt(buf, off + 24));
         sym.name = readCString(buf, strtabOffset + nameOffset);
 
-        file.symbolByNum[sym.num] = static_cast<int>(file.symbols.size());
+        file.symbolByNum[sym.num] = file.symbols.size();
         file.symbols.push_back(sym);
     }
 

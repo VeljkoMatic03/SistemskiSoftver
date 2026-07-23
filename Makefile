@@ -17,7 +17,11 @@ TARGET := assembler.exe
 
 SRCS_LINKER := \
 	$(SRC_DIR)/linker/main_linker.cpp \
-	$(SRC_DIR)/linker/object_reader.cpp
+	$(SRC_DIR)/linker/object_reader.cpp \
+	$(SRC_DIR)/linker/aggregator.cpp \
+	$(SRC_DIR)/linker/cli.cpp \
+	$(SRC_DIR)/linker/linker.cpp \
+	$(SRC_DIR)/linker/placement.cpp
 
 OBJS_LINKER := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS_LINKER))
 
