@@ -13,7 +13,7 @@ SRCS := \
 
 OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 
-TARGET := assembler.exe
+TARGET := assembler
 
 SRCS_LINKER := \
 	$(SRC_DIR)/linker/main_linker.cpp \
@@ -28,7 +28,7 @@ SRCS_LINKER := \
 
 OBJS_LINKER := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS_LINKER))
 
-TARGET_LINKER := linker.exe
+TARGET_LINKER := linker
 
 .PHONY: all clean
 

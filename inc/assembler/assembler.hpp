@@ -70,12 +70,15 @@ private:
     void finalizeAssembling(int lineNum, const std::string& rawLine);
 
     // Rewrites every relocation that targets a LOCAL symbol to reference that symbol's own
-    // SEC entry instead, folding the symbol's own offset into the addend. Runs once, at the
+    // SEC entry instead, folding the symbol's own offset into the addend. Also the only place
+    // that catches an undefined symbol referenced solely via .word (which emits its relocation
+    // directly, bypassing the backpatch table entirely - see addRelocationOrBackpatch), so it
+    // needs lineNum/rawLine to report that error properly instead of crashing. Runs once, at the
     // very end (after every .global/label has been processed and every symbol's final bind
     // is settled) - a symbol's bind can still change via a .global appearing anywhere in the
     // file, including after the symbol was used in a relocation, so this can't be decided
     // eagerly at the point each relocation is first created.
-    void finalizeRelocations();
+    void finalizeRelocations(int lineNum, const std::string& rawLine);
 
     // appends a relocation entry - used both for .word initializers (addRelocationOrBackpatch)
     // and for backpatch entries that turn out to need linker resolution (handleLabel)

@@ -845,19 +845,25 @@ void Assembler::finalizeAssembling(int lineNum, const std::string& rawLine) {
         }
     }
 
-    finalizeRelocations();
+    finalizeRelocations(lineNum, rawLine);
 }
 
 // Runs once, after every symbol's final bind is settled (a .global can appear anywhere in
 // the file, even after a symbol was already used in a relocation, so this can't be decided
 // at the point each relocation is first created - see the declaration in assembler.hpp).
-void Assembler::finalizeRelocations() {
+void Assembler::finalizeRelocations(int lineNum, const std::string& rawLine) {
     for (RelocationTableEntry& r : relocs) {
         const SymbolTableEntry& sym = symtab.getByNum(r.symbolId);
         if (sym.bind == SymbolBind::LOCAL) {
-            // Guaranteed defined: a LOCAL symbol still undefined at EOF is already a hard
-            // assembler error (see the undefined-symbol check just above), so every
-            // LOCAL-bind entry reaching this point has a real section+value.
+            // A LOCAL symbol reached via the backpatch table is already guaranteed defined
+            // here (see the remaining-backpatch-names check above) - but .word's relocation
+            // is emitted directly (addRelocationOrBackpatch never touches backpatch at all),
+            // so a symbol referenced ONLY via .word and never a label/.global/.extern slips
+            // past that check entirely. Catch it here instead of letting sectionId stay -1
+            // and crash getById() with an unhandled std::out_of_range.
+            if (!sym.isDefined) {
+                throw AssemblerError("nedefinisan simbol: " + sym.name, lineNum, rawLine);
+            }
             const SectionData& sec = sectionManager.getById(sym.sectionId);
             const SymbolTableEntry& sectionSym = symtab.get(sec.name);
             r.symbolId = sectionSym.num;
