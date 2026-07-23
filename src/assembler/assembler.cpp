@@ -6,8 +6,21 @@
 #include <cstdio>
 #include <fstream>
 #include <functional>
+#include <stdexcept>
 #include <unordered_map>
 
+// Wraps std::stol's base-0 (auto hex/octal/decimal) parsing so a malformed literal becomes a
+// clean AssemblerError instead of letting std::invalid_argument/std::out_of_range escape
+// uncaught and crash the process - same failure shape as the .word-undefined-symbol bug.
+long parseLiteral(const std::string& text, int lineNum, const std::string& rawLine) {
+    try {
+        return std::stol(text, nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        throw AssemblerError("invalid numeric literal: '" + text + "'", lineNum, rawLine);
+    } catch (const std::out_of_range&) {
+        throw AssemblerError("numeric literal out of range: '" + text + "'", lineNum, rawLine);
+    }
+}
 
 void Assembler::assembleFile(const std::string& inputPath) {
     std::ifstream in(inputPath);
@@ -142,7 +155,7 @@ void Assembler::handleWord(const std::vector<std::string>& args, int lineNum, co
         int offset = sectionManager.appendZeros(4); // reserve 4 bytes, placeholder = 0
 
         if (isNumber) {
-            int value = std::stol(initItem, nullptr, 0);
+            int value = parseLiteral(initItem, lineNum, rawLine);
             uint8_t* target = sectionManager.rawPointerAt(sectionManager.currentSectionId(), offset);
             writeU32LE(target, value);
         } else {
@@ -158,7 +171,7 @@ void Assembler::handleSkip(const std::vector<std::string>& args, int lineNum, co
     if (args.size() != 1) {
         throw AssemblerError(".skip ocekuje tacno jedan argument (broj bajtova)", lineNum, rawLine);
     }
-    long count = std::stol(args[0], nullptr, 0);
+    long count = parseLiteral(args[0], lineNum, rawLine);
     if (count < 0) {
         throw AssemblerError(".skip ocekuje nenegativan broj bajtova", lineNum, rawLine);
     }
@@ -355,7 +368,7 @@ void Assembler::resolveDisplacement(std::string operand, int lineNum, const std:
                     ((operand[0] >= '0' && operand[0] <= '9') ||
                      (operand[0] == '-' && operand.size() > 1));
     if(isNumber) {
-        int value = std::stol(operand, nullptr, 0);
+        int value = parseLiteral(operand, lineNum, rawLine);
         value *= sign;
         if (!encodeDisp12(instr.data(), value)) {
             throw AssemblerError("literal displacement '" + operand + "' doesn't fit in 12 bits", lineNum, rawLine);
@@ -644,46 +657,54 @@ void Assembler::handleLoadInstruction(const std::string& mnemonic, const std::ve
         return;
     }
     if(target[0] == '[') {
-        patchMod(instr.data(), 2);
-        std::string regString = "";
-        regString += target[1];
-        regString += target[2];
-        regString += target[3];
-        int restIndex = 4;
-        if(target[4] >= '0' && target[4] <= '9') {
-            regString += target[4];
-            restIndex = 5;
-        }
-        int regB = parseRegister(regString, lineNum, rawLine);
-        patchRegB(instr.data(), regB);
-        if(target[restIndex] != '+' && target[restIndex] != '-' && target[restIndex] != ']' && target[restIndex] != ' ') {
-            throw AssemblerError("Invalid target operand for '" + mnemonic + "' instruction", lineNum, rawLine);
-        }
-        while(target[restIndex] == ' ') {
-            restIndex++;
-        }
-        if(target[restIndex] == ']') {
+        // Manual char-by-char scan below can walk past the end of `target` on malformed
+        // input (e.g. a missing ']') - .at() throws std::out_of_range instead of the
+        // operator[] undefined behavior that would otherwise result, and the catch below
+        // turns that into a normal AssemblerError.
+        try {
+            patchMod(instr.data(), 2);
+            std::string regString = "";
+            regString += target.at(1);
+            regString += target.at(2);
+            regString += target.at(3);
+            int restIndex = 4;
+            if(target.at(4) >= '0' && target.at(4) <= '9') {
+                regString += target.at(4);
+                restIndex = 5;
+            }
+            int regB = parseRegister(regString, lineNum, rawLine);
+            patchRegB(instr.data(), regB);
+            if(target.at(restIndex) != '+' && target.at(restIndex) != '-' && target.at(restIndex) != ']' && target.at(restIndex) != ' ') {
+                throw AssemblerError("Invalid target operand for '" + mnemonic + "' instruction", lineNum, rawLine);
+            }
+            while(target.at(restIndex) == ' ') {
+                restIndex++;
+            }
+            if(target.at(restIndex) == ']') {
+                sectionManager.appendBytes(instr);
+                return;
+            }
+            int sign = 1;
+            if(target.at(restIndex) == '-') {
+                sign = -1;
+                restIndex++;
+            } else if(target.at(restIndex) == '+') {
+                restIndex++;
+            }
+            while(target.at(restIndex) == ' ') {
+                restIndex++;
+            }
+            std::string operandString = "";
+            while(target.at(restIndex) != ']') {
+                operandString += target.at(restIndex);
+                restIndex++;
+            }
+            resolveDisplacement(operandString, lineNum, rawLine, sign, instr);
             sectionManager.appendBytes(instr);
             return;
+        } catch (const std::out_of_range&) {
+            throw AssemblerError("malformed addressing operand: '" + target + "'", lineNum, rawLine);
         }
-        int sign = 1;
-        if(target[restIndex] == '-') {
-            sign = -1;
-            restIndex++;
-        } else if(target[restIndex] == '+') {
-            restIndex++;
-        }
-        while(target[restIndex] == ' ') {
-            restIndex++;
-        }
-        std::string operandString = "";
-        while(target[restIndex] != ']') {
-            operandString += target[restIndex];
-            restIndex++;
-        }
-        resolveDisplacement(operandString, lineNum, rawLine, sign, instr);
-        sectionManager.appendBytes(instr);
-        return;
     }
     // $literal / $symbol -> immediate, always via the literal pool (see routeThroughPool -
     // it patches MOD/regB/regC itself, unconditionally).
@@ -712,46 +733,52 @@ void Assembler::handleStoreInstruction(const std::string& mnemonic, const std::v
     patchRegC(instr.data(), regSrc);
     patchRegA(instr.data(), 0);
     if(target[0] == '[') {
-        patchMod(instr.data(), 0);
-        std::string regString = "";
-        regString += target[1];
-        regString += target[2];
-        regString += target[3];
-        int restIndex = 4;
-        if(target[4] >= '0' && target[4] <= '9') {
-            regString += target[4];
-            restIndex = 5;
-        }
-        int regB = parseRegister(regString, lineNum, rawLine);
-        patchRegB(instr.data(), regB);
-        if(target[restIndex] != '+' && target[restIndex] != '-' && target[restIndex] != ']' && target[restIndex] != ' ') {
-            throw AssemblerError("Invalid target operand for '" + mnemonic + "' instruction", lineNum, rawLine);
-        }
-        while(target[restIndex] == ' ') {
-            restIndex++;
-        }
-        if(target[restIndex] == ']') {
+        // See the identical try/catch in handleLoadInstruction: .at() turns a malformed
+        // (e.g. missing ']') operand into a catchable std::out_of_range instead of UB.
+        try {
+            patchMod(instr.data(), 0);
+            std::string regString = "";
+            regString += target.at(1);
+            regString += target.at(2);
+            regString += target.at(3);
+            int restIndex = 4;
+            if(target.at(4) >= '0' && target.at(4) <= '9') {
+                regString += target.at(4);
+                restIndex = 5;
+            }
+            int regB = parseRegister(regString, lineNum, rawLine);
+            patchRegB(instr.data(), regB);
+            if(target.at(restIndex) != '+' && target.at(restIndex) != '-' && target.at(restIndex) != ']' && target.at(restIndex) != ' ') {
+                throw AssemblerError("Invalid target operand for '" + mnemonic + "' instruction", lineNum, rawLine);
+            }
+            while(target.at(restIndex) == ' ') {
+                restIndex++;
+            }
+            if(target.at(restIndex) == ']') {
+                sectionManager.appendBytes(instr);
+                return;
+            }
+            int sign = 1;
+            if(target.at(restIndex) == '-') {
+                sign = -1;
+                restIndex++;
+            } else if(target.at(restIndex) == '+') {
+                restIndex++;
+            }
+            while(target.at(restIndex) == ' ') {
+                restIndex++;
+            }
+            std::string operandString = "";
+            while(target.at(restIndex) != ']') {
+                operandString += target.at(restIndex);
+                restIndex++;
+            }
+            resolveDisplacement(operandString, lineNum, rawLine, sign, instr);
             sectionManager.appendBytes(instr);
             return;
+        } catch (const std::out_of_range&) {
+            throw AssemblerError("malformed addressing operand: '" + target + "'", lineNum, rawLine);
         }
-        int sign = 1;
-        if(target[restIndex] == '-') {
-            sign = -1;
-            restIndex++;
-        } else if(target[restIndex] == '+') {
-            restIndex++;
-        }
-        while(target[restIndex] == ' ') {
-            restIndex++;
-        }
-        std::string operandString = "";
-        while(target[restIndex] != ']') {
-            operandString += target[restIndex];
-            restIndex++;
-        }
-        resolveDisplacement(operandString, lineNum, rawLine, sign, instr);
-        sectionManager.appendBytes(instr);
-        return;
     }
     patchRegB(instr.data(), 0);
     // Bare literal or symbol as a store target: always routes through the literal pool,
