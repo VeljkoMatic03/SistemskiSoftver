@@ -271,9 +271,11 @@ std::unordered_map<std::string, std::vector<uint8_t>> instructionOpcodes = {
     {"div", {0x53, 0x00, 0x00, 0x00}},
     {"xchg", {0x40, 0x00, 0x00, 0x00}},
     {"jmp", {0x30, 0x00, 0x00, 0x00}},
-    {"beq", {0x31, 0x00, 0x00, 0x00}},
-    {"bne", {0x32, 0x00, 0x00, 0x00}},
-    {"bgt", {0x33, 0x00, 0x00, 0x00}},
+    // mem forms (MOD 9/A/B) - branch targets now route through the literal pool, same as
+    // jmp/call, instead of encoding pc<=pc+D directly (see handleBranchInstruction).
+    {"beq", {0x39, 0x00, 0x00, 0x00}},
+    {"bne", {0x3A, 0x00, 0x00, 0x00}},
+    {"bgt", {0x3B, 0x00, 0x00, 0x00}},
     {"call", {0x20, 0x00, 0x00, 0x00}},
     {"ld", {0x91, 0x00, 0x00, 0x00}},
     {"st", {0x80, 0x00, 0x00, 0x00}},
@@ -391,22 +393,27 @@ void Assembler::resolveDisplacement(std::string operand, int lineNum, const std:
 
 void Assembler::resolvePcRelativeOperand(const std::string& operand, int sectionId, int pc,
                                           int lineNum, const std::string& rawLine) {
-    // Is the operand a literal (number) or a symbol?
-    bool isNumber = !operand.empty() &&
-                    ((operand[0] >= '0' && operand[0] <= '9') ||
-                     (operand[0] == '-' && operand.size() > 1));
-
-    if (isNumber) {
-        // Fully known right now: no symbol involved, and "pc" is this instruction's own
-        // offset, which we already have. No relocation/backpatch needed at all.
-        int value = std::stol(operand, nullptr, 0);
-        int disp = value - pc;
-        uint8_t* patchAt = sectionManager.rawPointerAt(sectionId, pc);
-        if (!encodeDisp12(patchAt, disp)) {
-            throw AssemblerError("displacement to '" + operand + "' doesn't fit in 12 bits", lineNum, rawLine);
-        }
-        return;
-    }
+    // NOTE: every current caller (ld/st pool routing, jmp/call, and beq/bne/bgt) always passes
+    // a generated literal-pool label (e.g. "__pool3"), never a raw numeric literal - so the
+    // fast path below is currently unreachable dead code. Left commented rather than deleted,
+    // in case a future direct (non-pooled) caller wants a short-circuit for a nearby, statically
+    // known literal target without paying for a pool round-trip.
+    //
+    // bool isNumber = !operand.empty() &&
+    //                 ((operand[0] >= '0' && operand[0] <= '9') ||
+    //                  (operand[0] == '-' && operand.size() > 1));
+    //
+    // if (isNumber) {
+    //     // Fully known right now: no symbol involved, and "pc" is this instruction's own
+    //     // offset, which we already have. No relocation/backpatch needed at all.
+    //     int value = std::stol(operand, nullptr, 0);
+    //     int disp = value - pc;
+    //     uint8_t* patchAt = sectionManager.rawPointerAt(sectionId, pc);
+    //     if (!encodeDisp12(patchAt, disp)) {
+    //         throw AssemblerError("displacement to '" + operand + "' doesn't fit in 12 bits", lineNum, rawLine);
+    //     }
+    //     return;
+    // }
 
     // Symbol operand - mirrors the same three-way split handleLabel already applies when
     // a label gets defined, just evaluated here at reference time instead of definition time.
@@ -589,7 +596,12 @@ void Assembler::handleBranchInstruction(const std::string& mnemonic, const std::
     int pc = sectionManager.currentOffset(); // this instruction's own start offset
     sectionManager.appendBytes(instr);       // OC/MOD + regA/regB/regC written now, disp still 0
 
-    resolvePcRelativeOperand(target, sectionId, pc, lineNum, rawLine);
+    // Route through the literal pool, mirroring jmp/call: pc<=mem32[pc+D] (mod 9/10/11) reads
+    // the target's absolute address from a nearby pool word (unlimited-range R_32 relocation),
+    // instead of encoding pc<=pc+D directly - so a branch can reach anywhere in the 4GB address
+    // space, not just +-2047 bytes from the branch instruction itself.
+    std::string literalName = requestPoolSlot(target);
+    resolvePcRelativeOperand(literalName, sectionId, pc, lineNum, rawLine);
 }
 
 // call, jmp

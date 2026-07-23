@@ -133,37 +133,4 @@ private:
 };
 
 
-// structs needed for binary file
-
-struct BinarySymbolTableEntry {
-    int num;
-    int nameOffset; // offset from string pool
-    int sectionId;
-    int bind;
-    int value;
-    int defined;
-    int type; // raw SymbolType value: UND=0, SYM=1, SEC=2
-};
-
-struct BinarySectionTableEntry {
-    int num;
-    int nameOffset; // offset from string pool
-    int size;
-    int dataOffset; // offset for data memory of this section
-};
-
-struct BinaryRelocationTableEntry {
-    int sectionId;
-    int symbolNum;
-    int offset; // where is the address in memory (relative to section base)
-                // that needs to be patched by linker
-    int addend;
-    int relocationType;
-};
-
-constexpr int HEADER_SIZE = 7 * sizeof(int);
-constexpr int SYMTAB_SIZE = sizeof(BinarySymbolTableEntry);
-constexpr int SECTAB_SIZE = sizeof(BinarySectionTableEntry);
-constexpr int RELTAB_SIZE = sizeof(BinaryRelocationTableEntry);
-
 #endif // ASSEMBLER_ASSEMBLER_HPP

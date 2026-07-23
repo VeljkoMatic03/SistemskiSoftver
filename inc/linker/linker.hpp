@@ -9,4 +9,9 @@
 // so every entry here is already a legitimate candidate for this check.
 void checkMultipleDefinitions(const AggregatedState& state);
 
+// Errors if any real GLOBAL symbol referenced somewhere is never defined in any input file.
+// -hex only - under -relocatable an unresolved symbol is legal, it's simply carried forward
+// as a fresh UND entry for a later link stage to resolve (see writeRelocatableObjectFile).
+void checkUnresolved(const AggregatedState& state);
+
 #endif // LINKER_LINKER_HPP

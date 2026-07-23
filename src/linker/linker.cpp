@@ -14,3 +14,12 @@ void checkMultipleDefinitions(const AggregatedState& state) {
         throw LinkerError(message);
     }
 }
+
+void checkUnresolved(const AggregatedState& state) {
+    for (const auto& kv : state.symbols) {
+        const GlobalSymbol& sym = kv.second;
+        if (!sym.defined) {
+            throw LinkerError("undefined symbol '" + sym.name + "'");
+        }
+    }
+}

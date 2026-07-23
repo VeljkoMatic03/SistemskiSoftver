@@ -6,9 +6,12 @@
 #include "common/errors.hpp"
 #include "linker/aggregator.hpp"
 #include "linker/cli.hpp"
+#include "linker/hex_writer.hpp"
 #include "linker/linker.hpp"
 #include "linker/object_reader.hpp"
 #include "linker/placement.hpp"
+#include "linker/relocatable_writer.hpp"
+#include "linker/relocator.hpp"
 
 // Temporary main for this development stage: parses real CLI flags, reads+aggregates every
 // input file, checks multiple definitions, and assigns base addresses - then dumps everything
@@ -116,6 +119,16 @@ int main(int argc, char** argv) {
         AggregatedState state = aggregate(opts.inputPaths);
         checkMultipleDefinitions(state);
         assignBaseAddresses(state, opts);
+        if (opts.hex) {
+            checkUnresolved(state);
+            computeFinalValues(state);
+            applyRelocations(state);
+            writeHexImage(state, opts.outputPath);
+        }
+        else {
+            writeRelocatableObjectFileText(state, opts.outputPath);
+            writeRelocatableObjectFile(state, opts.outputPath + ".bin");
+        }
         dumpAggregated(state);
     } catch (const LinkerError& e) {
         std::cerr << "Greska: " << e.what() << "\n";

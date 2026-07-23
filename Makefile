@@ -21,7 +21,10 @@ SRCS_LINKER := \
 	$(SRC_DIR)/linker/aggregator.cpp \
 	$(SRC_DIR)/linker/cli.cpp \
 	$(SRC_DIR)/linker/linker.cpp \
-	$(SRC_DIR)/linker/placement.cpp
+	$(SRC_DIR)/linker/placement.cpp \
+	$(SRC_DIR)/linker/relocator.cpp \
+	$(SRC_DIR)/linker/relocatable_writer.cpp \
+	$(SRC_DIR)/linker/hex_writer.cpp
 
 OBJS_LINKER := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS_LINKER))
 
