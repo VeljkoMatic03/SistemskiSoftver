@@ -15,16 +15,27 @@ OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 
 TARGET := assembler.exe
 
+SRCS_LINKER := \
+	$(SRC_DIR)/linker/main_linker.cpp \
+	$(SRC_DIR)/linker/object_reader.cpp
+
+OBJS_LINKER := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS_LINKER))
+
+TARGET_LINKER := linker.exe
+
 .PHONY: all clean
 
-all: $(TARGET)
+all: $(TARGET) $(TARGET_LINKER)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $(OBJS)
+
+$(TARGET_LINKER): $(OBJS_LINKER)
+	$(CXX) $(CXXFLAGS) -o $@ $(OBJS_LINKER)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET)
+	rm -rf $(BUILD_DIR) $(TARGET) $(TARGET_LINKER)
