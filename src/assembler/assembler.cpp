@@ -88,10 +88,12 @@ void Assembler::handleLabel(const std::string& name, int lineNum, const std::str
             continue;
         }
 
-        // W12_SIGNED, same section: displacement is fully known now.
+        // W12_SIGNED, same section: displacement is fully known now. -4 because pc has
+        // already advanced past this instruction (to entry.patchOffset+4) by the time it
+        // reads pc as an addressing operand during its own execution - see the matching
+        // adjustment in resolvePcRelativeOperand.
         uint8_t* target = sectionManager.rawPointerAt(entry.sectionId, entry.patchOffset);
-        int disp = offset - entry.patchOffset // + instruction length if PC = next instruction
-                 + entry.addend;
+        int disp = offset - (entry.patchOffset + 4) + entry.addend;
         if (!encodeDisp12(target, disp)) {
             throw AssemblerError("displacement to '" + name + "' doesn't fit in 12 bits", lineNum, rawLine);
         }
@@ -420,7 +422,7 @@ void Assembler::resolvePcRelativeOperand(const std::string& operand, int section
     //     // Fully known right now: no symbol involved, and "pc" is this instruction's own
     //     // offset, which we already have. No relocation/backpatch needed at all.
     //     int value = std::stol(operand, nullptr, 0);
-    //     int disp = value - pc;
+    //     int disp = value - (pc + 4); // -4: pc has already advanced past this instruction
     //     uint8_t* patchAt = sectionManager.rawPointerAt(sectionId, pc);
     //     if (!encodeDisp12(patchAt, disp)) {
     //         throw AssemblerError("displacement to '" + operand + "' doesn't fit in 12 bits", lineNum, rawLine);
@@ -433,8 +435,11 @@ void Assembler::resolvePcRelativeOperand(const std::string& operand, int section
     if (symtab.exists(operand) && symtab.get(operand).isDefined) {
         const SymbolTableEntry& sym = symtab.get(operand);
         if (sym.sectionId == sectionId) {
-            // Same section as this instruction: displacement is fully known now.
-            int disp = sym.value - pc;
+            // Same section as this instruction: displacement is fully known now. -4 because
+            // pc has already advanced past this instruction (to pc+4) by the time it reads
+            // pc as an addressing operand during its own execution - see handleLabel's
+            // matching W12_SIGNED adjustment.
+            int disp = sym.value - (pc + 4);
             uint8_t* patchAt = sectionManager.rawPointerAt(sectionId, pc);
             if (!encodeDisp12(patchAt, disp)) {
                 throw AssemblerError("displacement to '" + operand + "' doesn't fit in 12 bits", lineNum, rawLine);
