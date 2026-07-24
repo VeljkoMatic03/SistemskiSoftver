@@ -1,5 +1,5 @@
 CXX := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -Iinc
+CXXFLAGS := -std=c++17 -Wall -Wextra -Iinc -pthread
 SRC_DIR := src
 BUILD_DIR := build
 
@@ -33,7 +33,8 @@ TARGET_LINKER := linker
 SRCS_EMULATOR := \
 	$(SRC_DIR)/emulator/main_emulator.cpp \
 	$(SRC_DIR)/emulator/virtual_cpu.cpp \
-	$(SRC_DIR)/emulator/hex_loader.cpp
+	$(SRC_DIR)/emulator/hex_loader.cpp \
+	$(SRC_DIR)/emulator/terminal.cpp
 
 OBJS_EMULATOR := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS_EMULATOR))
 

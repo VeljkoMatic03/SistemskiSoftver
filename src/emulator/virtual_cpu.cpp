@@ -157,6 +157,18 @@ void VirtualCPU::enterInterrupt(uint32_t causeValue) {
     pc = getCsr(1); // jump to handler
 }
 
+bool VirtualCPU::isGloballyMasked() const {
+    return (getCsr(0) & STATUS_I_BIT) != 0;
+}
+
+bool VirtualCPU::isTerminalMasked() const {
+    return (getCsr(0) & STATUS_TL_BIT) != 0;
+}
+
+void VirtualCPU::setTerminalInput(uint8_t value) {
+    termIn = value;
+}
+
 CPUState VirtualCPU::executeSoftwareInterrupt() {
     if (instruction.mode != 0x0) {
         return CPUState::ILLEGAL;

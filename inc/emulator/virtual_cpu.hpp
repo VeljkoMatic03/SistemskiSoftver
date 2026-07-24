@@ -50,9 +50,20 @@ public:
     // inconsistency; every cause uses the general rule here.
     void enterInterrupt(uint32_t causeValue);
 
+    // Status-bit checks for the main loop's between-instructions interrupt poll (cause=2/3
+    // are gated by these; cause=1/4 are not, see main_emulator.cpp).
+    bool isGloballyMasked() const;   // I bit
+    bool isTerminalMasked() const;   // Tl bit
+
+    // Delivers a keystroke into term_in ahead of raising a terminal interrupt. Bypasses the
+    // normal MMIO write path deliberately - a real program writing term_in itself would be
+    // meaningless (the spec never documents that direction), so this is the only writer.
+    void setTerminalInput(uint8_t value);
+
 private:
     static constexpr uint32_t MMIO_BASE = 0xFFFFFF00u;
-    static constexpr uint32_t STATUS_I_BIT = 0x4; // global interrupt mask bit, see enterInterrupt
+    static constexpr uint32_t STATUS_I_BIT = 0x4;  // global interrupt mask bit, see enterInterrupt
+    static constexpr uint32_t STATUS_TL_BIT = 0x2; // terminal interrupt mask bit
 
     uint32_t readMmio(uint32_t addr) const;
     void writeMmio(uint32_t addr, uint32_t value);

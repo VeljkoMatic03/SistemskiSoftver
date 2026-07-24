@@ -4,6 +4,7 @@
 
 #include "common/errors.hpp"
 #include "emulator/hex_loader.hpp"
+#include "emulator/terminal.hpp"
 #include "emulator/virtual_cpu.hpp"
 
 namespace {
@@ -31,6 +32,7 @@ int main(int argc, char** argv) {
     try {
         VirtualCPU cpu;
         loadHexImage(cpu, inputPath);
+        Terminal terminal;
 
         while (true) {
             cpu.readInstruction();
@@ -41,7 +43,18 @@ int main(int argc, char** argv) {
                 break;
             }
             if (outcome == CPUState::ILLEGAL) {
+                // Illegal instruction is unconditional - never gated by the mask bits,
+                // unlike timer/terminal below.
                 cpu.enterInterrupt(1);
+                continue;
+            }
+            // Interrupts are only ever serviced between instructions, never mid-instruction -
+            // this check runs once per loop iteration, after the instruction that just
+            // executed has fully completed. `int` itself (cause=4) is synchronous and handled
+            // entirely inside executeInstruction(), so it never appears here.
+            if (terminal.hasPending() && !cpu.isGloballyMasked() && !cpu.isTerminalMasked()) {
+                cpu.setTerminalInput(terminal.takePending());
+                cpu.enterInterrupt(3);
             }
         }
 
