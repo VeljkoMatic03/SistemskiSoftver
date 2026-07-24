@@ -30,9 +30,18 @@ OBJS_LINKER := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS_LINKER))
 
 TARGET_LINKER := linker
 
+SRCS_EMULATOR := \
+	$(SRC_DIR)/emulator/main_emulator.cpp \
+	$(SRC_DIR)/emulator/virtual_cpu.cpp \
+	$(SRC_DIR)/emulator/hex_loader.cpp
+
+OBJS_EMULATOR := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS_EMULATOR))
+
+TARGET_EMULATOR := emulator
+
 .PHONY: all clean
 
-all: $(TARGET) $(TARGET_LINKER)
+all: $(TARGET) $(TARGET_LINKER) $(TARGET_EMULATOR)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $(OBJS)
@@ -40,9 +49,12 @@ $(TARGET): $(OBJS)
 $(TARGET_LINKER): $(OBJS_LINKER)
 	$(CXX) $(CXXFLAGS) -o $@ $(OBJS_LINKER)
 
+$(TARGET_EMULATOR): $(OBJS_EMULATOR)
+	$(CXX) $(CXXFLAGS) -o $@ $(OBJS_EMULATOR)
+
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET) $(TARGET_LINKER)
+	rm -rf $(BUILD_DIR) $(TARGET) $(TARGET_LINKER) $(TARGET_EMULATOR)

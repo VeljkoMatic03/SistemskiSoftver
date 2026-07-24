@@ -20,4 +20,9 @@ public:
     explicit LinkerError(const std::string& message) : std::runtime_error(message) {}
 };
 
+class EmulatorError : public std::runtime_error {
+public:
+    explicit EmulatorError(const std::string& message) : std::runtime_error(message) {}
+};
+
 #endif // COMMON_ERRORS_HPP
