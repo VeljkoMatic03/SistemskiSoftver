@@ -296,8 +296,14 @@ std::unordered_map<std::string, std::vector<uint8_t>> instructionOpcodes = {
     {"st", {0x80, 0x00, 0x00, 0x00}},
     {"csrrd", {0x90, 0x00, 0x00, 0x00}}, // csrrd/csrwr are MOD variants of ld (OC=9), not their own OC
     {"csrwr", {0x94, 0x00, 0x00, 0x00}},
-    {"iret", {0x93, 0xFE, 0x00, 0x04}},
-    {"iret2", {0x97, 0x0E, 0x00, 0x04}},
+    // iret compiles to two ordinary instructions, emitted in THIS order (see
+    // handleNoOpInstruction): pop status first, WITHOUT advancing sp (MOD=6, reads [sp+4] -
+    // status's actual slot, since it was pushed before pc), then pop pc last, advancing sp by
+    // 8 in one shot to cover both slots. This is NOT the naive "pop pc; pop status" order the
+    // spec's prose suggests - popping pc first would overwrite pc immediately, jumping away
+    // before the second instruction (sitting right after it in memory) could ever be fetched.
+    {"iret", {0x96, 0x0E, 0x00, 0x04}},   // csr[0]<=mem32[sp+4] (status, no increment)
+    {"iret2", {0x93, 0xFE, 0x00, 0x08}},  // pc<=mem32[sp]; sp<=sp+8 (pc, last - redirects control flow)
     {"ret", {0x93, 0xFE, 0x00, 0x04}}, // just pop pc
     {"pop", {0x93, 0x0E, 0x00, 0x04}},
     {"push", {0x81, 0xE0, 0x0F, 0xFC}}
