@@ -23,9 +23,17 @@ void applyRelocations(AggregatedState& state) {
         }
 
         int globalSectionId = lr.patchSectionId;
+        if (globalSectionId < 0 || globalSectionId >= static_cast<int>(sectionsVector.size())) {
+            throw LinkerError("relocation references invalid section id " + std::to_string(globalSectionId));
+        }
         auto& sectionToBePatched = sectionsVector[globalSectionId];
         std::vector<uint8_t>& dataToBePatched = sectionToBePatched.data;
         int offsetInData = lr.patchOffset;
+        if (offsetInData < 0 || offsetInData + 4 > static_cast<int>(dataToBePatched.size())) {
+            throw LinkerError("relocation patch offset " + std::to_string(offsetInData)
+                               + " is out of bounds for section '" + sectionToBePatched.name
+                               + "' (size " + std::to_string(dataToBePatched.size()) + ")");
+        }
 
         // getting target value
         // if relocation record is for local symbol
