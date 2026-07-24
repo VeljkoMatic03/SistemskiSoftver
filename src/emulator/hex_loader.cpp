@@ -27,8 +27,6 @@ std::string nextToken(const std::string& line, int& pos) {
     return line.substr(start, pos - start);
 }
 
-// Tolerant on purpose (variable digit count/case both accepted via base-16 std::stoul) -
-// this only ever needs to read our own linker's output, but being forgiving costs nothing.
 uint32_t parseHexToken(const std::string& token, int lineNum, const std::string& rawLine) {
     try {
         return static_cast<uint32_t>(std::stoul(token, nullptr, 16));
@@ -38,7 +36,7 @@ uint32_t parseHexToken(const std::string& token, int lineNum, const std::string&
     }
 }
 
-} // namespace
+}
 
 void loadHexImage(VirtualCPU& cpu, const std::string& path) {
     std::ifstream in(path);

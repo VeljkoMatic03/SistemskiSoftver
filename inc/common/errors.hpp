@@ -4,8 +4,8 @@
 #include <stdexcept>
 #include <string>
 
-// Thrown anywhere line parsing/processing hits a syntax or semantic error.
-// Caught ONCE, in the relevant tool's main().
+// thrown anywhere line parsing/processing hits a syntax or semantic error.
+// caught once, in the relevant tool's main().
 class AssemblerError : public std::runtime_error {
 public:
     AssemblerError(const std::string& message, int line = -1, const std::string& lineText = "")

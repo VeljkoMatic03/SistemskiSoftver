@@ -3,10 +3,7 @@
 
 #include "linker/linker_types.hpp"
 
-// Computes every real GLOBAL symbol's absolute address (step 4, -hex only): finalValue =
-// baseAddress of the symbol's defining section + its already section-shifted value. Only
-// touches symbols with defined == true - call checkUnresolved first so an undefined symbol's
-// untouched finalValue (default 0) is never mistakenly read as meaningful.
+// used only with -hex arg, computes final value which is baseAddress combined with it's previous value
 void computeFinalValues(AggregatedState& state);
 
 void applyRelocations(AggregatedState& state);

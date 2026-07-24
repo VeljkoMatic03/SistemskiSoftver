@@ -25,18 +25,14 @@ struct BackpatchEntry {
     int         addend;       // additive constant for W32/W12_SIGNED; sign multiplier (+1/-1) for W12_ABS
 };
 
-// Holds all forward references within the current file that are STILL UNRESOLVED, keyed by symbol name.
-// When a symbol is defined, resolveAll() returns all of its entries so they can be written immediately.
-// Whatever remains in the table at .end/EOF must become a relocation (if the symbol is .extern)
-// or be reported as an "undefined symbol" error.
 class BackpatchTable {
 public:
     void add(const std::string& symbolName, const BackpatchEntry& entry);
 
-    // Returns and REMOVES all entries tied to the given symbol (called when the symbol gets defined).
+    // Returns and removes all entries tied to the given symbol (called when the symbol gets defined).
     std::vector<BackpatchEntry> resolveAll(const std::string& symbolName);
 
-    // All symbol names that remain unresolved (for the final check at .end/EOF).
+    // all symbol names that remain unresolved (for the final check at .end/EOF).
     std::vector<std::string> remainingSymbolNames() const;
 
 private:

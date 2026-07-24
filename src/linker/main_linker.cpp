@@ -13,12 +13,9 @@
 #include "linker/relocatable_writer.hpp"
 #include "linker/relocator.hpp"
 
-// Temporary main for this development stage: parses real CLI flags, reads+aggregates every
-// input file, checks multiple definitions, and assigns base addresses - then dumps everything
-// it has so far (relocations are still unapplied, symbols' finalValue still unset - those come
-// in steps 4/6). writeHexImage/writeRelocatableObjectFile/checkUnresolved not implemented yet.
 namespace {
 
+// for testing purposes
 void dumpFile(const ParsedObjectFile& file) {
     std::cout << "#FILE " << file.path << "\n";
 
@@ -105,7 +102,7 @@ void dumpAggregated(const AggregatedState& state) {
     }
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv) {
     try {

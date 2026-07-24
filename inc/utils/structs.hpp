@@ -14,7 +14,7 @@ enum class SymbolBind {
 // SYM: an ordinary user symbol, defined via a label.
 // SEC: an auto-generated symbol representing a section itself (one per section, value=0,
 // bind=GLOBAL) - relocations against a LOCAL symbol are rewritten to reference the LOCAL
-// symbol's own SEC entry instead, with the LOCAL symbol's own offset folded into the addend.
+// symbol's own SEC entry instead, with the LOCAL symbol's own offset folded into the addend
 enum class SymbolType {
     UND,
     SYM,

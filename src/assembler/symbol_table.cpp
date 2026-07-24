@@ -73,20 +73,20 @@ void SymbolTable::defineLabel(const std::string& name, int sectionId, int offset
         throw AssemblerError("label '" + name + "' collides with a section of the same name", currentLine, lineText);
     }
     if (entry.isDefined) {
-        throw AssemblerError("redefinicija simbola '" + name + "'", currentLine, lineText);
+        throw AssemblerError("redefinition of a symbol '" + name + "'", currentLine, lineText);
     }
 
     entry.sectionId = sectionId;
     entry.value = offset;
     entry.isDefined = true;
     entry.type = SymbolType::SYM;
-    // bind is NOT touched here - if it was previously set to GLOBAL via .global, it stays that way.
+    // don't touch bind
 }
 
 void SymbolTable::declareGlobal(const std::string& name) {
     SymbolTableEntry& entry = getOrCreate(name);
     entry.bind = SymbolBind::GLOBAL;
-    // isDefined is NOT touched here.
+    // don't touch isDefined
 }
 
 std::vector<SymbolTableEntry> SymbolTable::allSortedByNum() const {

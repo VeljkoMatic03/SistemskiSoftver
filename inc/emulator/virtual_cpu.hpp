@@ -25,14 +25,9 @@ public:
     uint32_t getCsr(int index) const;
     void setCsr(int index, uint32_t value); // index: 0=status, 1=handler, 2=cause
 
-    // Word-granular access - the ISA has no byte-level load/store, so this is the only
-    // access width the interpreter ever needs. Dispatches to the memory-mapped registers
-    // for addr >= MMIO_BASE, otherwise to the sparse byte map.
     uint32_t readWord(uint32_t addr) const;
     void writeWord(uint32_t addr, uint32_t value);
 
-    // Raw byte access bypassing MMIO entirely - for the hex-image loader only, which must
-    // never trigger a peripheral side effect (e.g. printing) while populating initial memory.
     uint8_t readRawByte(uint32_t addr) const;
     void writeRawByte(uint32_t addr, uint8_t value);
 
@@ -40,14 +35,6 @@ public:
     void decodeInstruction();
     CPUState executeInstruction();
 
-    // Shared by every interrupt cause - int calls this itself (synchronous); the main loop
-    // calls it directly for illegal (1), timer (2), and terminal (3), since those are always
-    // raised from outside a single instruction's own execution. Push status, then pc, set
-    // cause, globally mask, jump to handler - per the spec's general entry rule (page 13).
-    // NOTE: the spec's own int-instruction pseudocode instead says "status<=status&(~0x1)",
-    // which clears the Tr (timer-mask) bit rather than setting I (global mask) - contradicting
-    // the general rule for what's supposed to be one instance of it. Treated as a spec
-    // inconsistency; every cause uses the general rule here.
     void enterInterrupt(uint32_t causeValue);
 
     // Status-bit checks for the main loop's between-instructions interrupt poll (cause=2/3
@@ -55,9 +42,7 @@ public:
     bool isGloballyMasked() const;   // I bit
     bool isTerminalMasked() const;   // Tl bit
 
-    // Delivers a keystroke into term_in ahead of raising a terminal interrupt. Bypasses the
-    // normal MMIO write path deliberately - a real program writing term_in itself would be
-    // meaningless (the spec never documents that direction), so this is the only writer.
+    // delivers a keystroke into term_in ahead of raising a terminal interrupt
     void setTerminalInput(uint8_t value);
 
 private:
@@ -96,8 +81,8 @@ private:
     std::unordered_map<uint32_t, uint8_t> memory;
 
     // term_in/tim_cfg are inert storage until the terminal/timer interrupt phase wires them
-    // to something that can actually raise a pending interrupt. term_out prints immediately
-    // on write since that side effect isn't interrupt-dependent at all.
+    // to something that can actually raise a pending interrupt, term_out prints immediately
+    // on write since that side effect isn't interrupt-dependent at all
     uint32_t termOut = 0;
     uint32_t termIn = 0;
     uint32_t timCfg = 0;

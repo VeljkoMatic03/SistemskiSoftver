@@ -5,10 +5,6 @@
 #include "common/byte_utils.hpp"
 #include "common/errors.hpp"
 
-// Record layouts mirror Assembler::writeBinaryObjectFile exactly (see assembler.cpp) - kept
-// as local constants here rather than including assembler/assembler.hpp, to keep the linker
-// decoupled from the assembler's own headers (the two components only agree on the binary
-// format itself, not on each other's internal types).
 namespace {
 
 constexpr int kIntSize = 4;
@@ -32,7 +28,7 @@ std::string readCString(const std::vector<uint8_t>& buf, int offset) {
     return result;
 }
 
-} // namespace
+}
 
 ParsedObjectFile readBinaryObjectFile(const std::string& path) {
     std::ifstream in(path, std::ios::binary);

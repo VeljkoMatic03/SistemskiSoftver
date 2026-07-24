@@ -9,9 +9,7 @@
 #include <stdexcept>
 #include <unordered_map>
 
-// Wraps std::stol's base-0 (auto hex/octal/decimal) parsing so a malformed literal becomes a
-// clean AssemblerError instead of letting std::invalid_argument/std::out_of_range escape
-// uncaught and crash the process - same failure shape as the .word-undefined-symbol bug.
+// if stol fails catch error and propagate our error message
 long parseLiteral(const std::string& text, int lineNum, const std::string& rawLine) {
     try {
         return std::stol(text, nullptr, 0);
@@ -68,9 +66,8 @@ void Assembler::handleLabel(const std::string& name, int lineNum, const std::str
 
     auto entries = backpatch.resolveAll(name);
     for (const auto& entry : entries) {
+        // used for regind with displ
         if (entry.width == PatchWidth::W12_ABS) {
-            // Never PC-relative, never relocated (see PatchWidth::W12_ABS) - just this
-            // symbol's own resolved value, regardless of which section it lives in.
             uint8_t* target = sectionManager.rawPointerAt(entry.sectionId, entry.patchOffset);
             int disp = entry.addend * offset; // addend holds the sign; offset = this symbol's own value
             if (!encodeDisp12(target, disp)) {
@@ -81,17 +78,13 @@ void Assembler::handleLabel(const std::string& name, int lineNum, const std::str
 
         bool sameSection = (entry.sectionId == sectionId);
 
-        // Directly patchable ONLY if same section AND PC-relative.
-        // Absolute (W32) or cross-section -> value depends on the linker -> relocation.
+        // directly patchable only if same section and PC-relative.
         if (entry.width == PatchWidth::W32 || !sameSection) {
             relocateEntry(name, entry);
             continue;
         }
 
-        // W12_SIGNED, same section: displacement is fully known now. -4 because pc has
-        // already advanced past this instruction (to entry.patchOffset+4) by the time it
-        // reads pc as an addressing operand during its own execution - see the matching
-        // adjustment in resolvePcRelativeOperand.
+        // for PC-relative
         uint8_t* target = sectionManager.rawPointerAt(entry.sectionId, entry.patchOffset);
         int disp = offset - (entry.patchOffset + 4) + entry.addend;
         if (!encodeDisp12(target, disp)) {
@@ -119,7 +112,7 @@ void Assembler::dispatchDirective(const std::string& name, const std::vector<std
     } else if (name == ".end") {
         endDirectiveSeen = true;
     } else if (name == ".equ") {
-        throw AssemblerError(".equ nije implementirano u ovoj verziji", lineNum, rawLine);
+        throw AssemblerError(".equ not implemented", lineNum, rawLine);
     } else {
         throw AssemblerError("Unknown directive: " + name, lineNum, rawLine);
     }
@@ -133,12 +126,9 @@ void Assembler::handleGlobalOrExtern(const std::vector<std::string>& args) {
 
 void Assembler::handleSection(const std::vector<std::string>& args, int lineNum, const std::string& rawLine) {
     if (args.size() != 1) {
-        throw AssemblerError(".section ocekuje tacno jedan argument (ime sekcije)", lineNum, rawLine);
+        throw AssemblerError(".section expects exactly one argument (section name)", lineNum, rawLine);
     }
-    // Flush into the section we're LEAVING, before switching - pool entries always need
-    // to land in the same section as the instructions that reference them (a no-op if
-    // nothing requested a pool slot since the last flush, including the very first
-    // .section in a file, when pendingPool is necessarily still empty).
+    // as we end section flush literal pool so PC-relative addressing is possible
     flushLiteralPool(lineNum, rawLine);
     sectionManager.openSection(args[0]);
     symtab.defineSection(args[0], sectionManager.currentSectionId());
@@ -146,10 +136,9 @@ void Assembler::handleSection(const std::vector<std::string>& args, int lineNum,
 
 void Assembler::handleWord(const std::vector<std::string>& args, int lineNum, const std::string& rawLine) {
     if (args.empty()) {
-        throw AssemblerError(".word ocekuje bar jedan inicijalizator", lineNum, rawLine);
+        throw AssemblerError(".word expects at least one initializer", lineNum, rawLine);
     }
     for (const auto& initItem : args) {
-        // Is the initializer a literal (number) or a symbol?
         bool isNumber = !initItem.empty() &&
                          ((initItem[0] >= '0' && initItem[0] <= '9') ||
                           (initItem[0] == '-' && initItem.size() > 1));
@@ -161,9 +150,8 @@ void Assembler::handleWord(const std::vector<std::string>& args, int lineNum, co
             uint8_t* target = sectionManager.rawPointerAt(sectionManager.currentSectionId(), offset);
             writeU32LE(target, value);
         } else {
-            // Symbol - even if it's already defined in THIS file, the final address is still
-            // computed by the linker (the assembler doesn't know a section's base address) -
-            // so we ALWAYS emit a relocation for .word + symbol.
+            // only linker knows address of the symbol, which is effectively it's value
+            // must be a relocation record
             addRelocationOrBackpatch(initItem, PatchWidth::W32, /*addend=*/0, lineNum, rawLine);
         }
     }
@@ -171,11 +159,11 @@ void Assembler::handleWord(const std::vector<std::string>& args, int lineNum, co
 
 void Assembler::handleSkip(const std::vector<std::string>& args, int lineNum, const std::string& rawLine) {
     if (args.size() != 1) {
-        throw AssemblerError(".skip ocekuje tacno jedan argument (broj bajtova)", lineNum, rawLine);
+        throw AssemblerError(".skip expects exactly one argument (number of bytes)", lineNum, rawLine);
     }
     long count = parseLiteral(args[0], lineNum, rawLine);
     if (count < 0) {
-        throw AssemblerError(".skip ocekuje nenegativan broj bajtova", lineNum, rawLine);
+        throw AssemblerError(".skip expects a non-negative number of bytes", lineNum, rawLine);
     }
     sectionManager.appendZeros(static_cast<int>(count));
 }
@@ -193,9 +181,9 @@ void Assembler::handleAscii(const std::vector<std::string>& args, int lineNum, c
     sectionManager.appendBytes(bytes);
 }
 
-// ============================================================
+// =================================================================
 // Relocations / backpatch
-// ============================================================
+// =================================================================
 
 void Assembler::emitRelocation(int sectionId, int offset, RelocationType type, int symbolId, int addend) {
     RelocationTableEntry reloc;
@@ -228,9 +216,9 @@ void Assembler::addRelocationOrBackpatch(const std::string& symbolName, PatchWid
     emitRelocation(sectionId, offset, relType, sym.num, addend);
 }
 
-// ============================================================
+// ==========================================================
 // Instructions
-// ============================================================
+// ==========================================================
 
 // every instruction is translated into this, which is by switch-case delegated to 
 // the right handler
@@ -241,10 +229,6 @@ enum class InstrShape {
 const std::unordered_map<std::string, InstrShape> kMnemonicShapes = {
     {"halt", InstrShape::NoOp},
     {"int", InstrShape::NoOp},
-    // iret/ret intentionally omitted: no opcode bytes decided yet (see instructionOpcodes
-    // below) and handleNoOpInstruction has no fallback for a missing template - leaving
-    // them out of this map means they correctly fall through to "not yet implemented"
-    // instead of silently appending zero bytes for a mnemonic instructionOpcodes doesn't have.
     {"push", InstrShape::OneOp},
     {"pop", InstrShape::OneOp},
     {"not", InstrShape::OneOp},
@@ -273,7 +257,7 @@ const std::unordered_map<std::string, InstrShape> kMnemonicShapes = {
 
 std::unordered_map<std::string, std::vector<uint8_t>> instructionOpcodes = {
     {"halt", {0x00, 0x00, 0x00, 0x00}},
-    {"int", {0x10, 0x00, 0x00, 0x00}}, // OC=1,MOD=0 - byte0 is [OC:4][MOD:4], not the other way round
+    {"int", {0x10, 0x00, 0x00, 0x00}},
     {"not", {0x60, 0x00, 0x00, 0x00}},
     {"and", {0x61, 0x00, 0x00, 0x00}},
     {"or", {0x62, 0x00, 0x00, 0x00}},
@@ -286,25 +270,18 @@ std::unordered_map<std::string, std::vector<uint8_t>> instructionOpcodes = {
     {"div", {0x53, 0x00, 0x00, 0x00}},
     {"xchg", {0x40, 0x00, 0x00, 0x00}},
     {"jmp", {0x30, 0x00, 0x00, 0x00}},
-    // mem forms (MOD 9/A/B) - branch targets now route through the literal pool, same as
-    // jmp/call, instead of encoding pc<=pc+D directly (see handleBranchInstruction).
     {"beq", {0x39, 0x00, 0x00, 0x00}},
     {"bne", {0x3A, 0x00, 0x00, 0x00}},
     {"bgt", {0x3B, 0x00, 0x00, 0x00}},
     {"call", {0x20, 0x00, 0x00, 0x00}},
     {"ld", {0x91, 0x00, 0x00, 0x00}},
     {"st", {0x80, 0x00, 0x00, 0x00}},
-    {"csrrd", {0x90, 0x00, 0x00, 0x00}}, // csrrd/csrwr are MOD variants of ld (OC=9), not their own OC
+    {"csrrd", {0x90, 0x00, 0x00, 0x00}},
     {"csrwr", {0x94, 0x00, 0x00, 0x00}},
-    // iret compiles to two ordinary instructions, emitted in THIS order (see
-    // handleNoOpInstruction): pop status first, WITHOUT advancing sp (MOD=6, reads [sp+4] -
-    // status's actual slot, since it was pushed before pc), then pop pc last, advancing sp by
-    // 8 in one shot to cover both slots. This is NOT the naive "pop pc; pop status" order the
-    // spec's prose suggests - popping pc first would overwrite pc immediately, jumping away
-    // before the second instruction (sitting right after it in memory) could ever be fetched.
+    // if we first pop pc, we will skip pop status, so we find a little hack around it
     {"iret", {0x96, 0x0E, 0x00, 0x04}},   // csr[0]<=mem32[sp+4] (status, no increment)
     {"iret2", {0x93, 0xFE, 0x00, 0x08}},  // pc<=mem32[sp]; sp<=sp+8 (pc, last - redirects control flow)
-    {"ret", {0x93, 0xFE, 0x00, 0x04}}, // just pop pc
+    {"ret", {0x93, 0xFE, 0x00, 0x04}},
     {"pop", {0x93, 0x0E, 0x00, 0x04}},
     {"push", {0x81, 0xE0, 0x0F, 0xFC}}
 };
@@ -339,8 +316,8 @@ int parseRegister(const std::string& operand, int lineNum, const std::string& ra
     if (operand.empty() || operand[0] != '%') {
         throw AssemblerError("Expected register operand starting with '%', got: " + operand, lineNum, rawLine);
     }
-    // %sp/%pc are aliases for %r14/%r15, not separate registers - checked before the
-    // generic '%rN' parsing below since they don't fit that shape at all.
+    // %sp/%pc are aliases for %r14/%r15 - checked before the
+    // '%rN' parsing below since they don't fit that shape
     if (operand == "%sp") return 14;
     if (operand == "%pc") return 15;
     if (operand.size() < 2) {
@@ -371,7 +348,6 @@ int parseCsrRegister(const std::string& operand, int lineNum, const std::string&
 
 void Assembler::resolveDisplacement(std::string operand, int lineNum, const std::string& rawLine,
     int sign, std::vector<uint8_t>& instr) {
-    // Is the operand a literal (number) or a symbol?
     bool isNumber = !operand.empty() &&
                     ((operand[0] >= '0' && operand[0] <= '9') ||
                      (operand[0] == '-' && operand.size() > 1));
@@ -398,15 +374,11 @@ void Assembler::resolveDisplacement(std::string operand, int lineNum, const std:
         return;
     }
 
-    // Not defined yet - defer via the existing backpatch mechanism. handleLabel will
-    // resolve it directly (same formula, sign * value) the moment the label is defined;
-    // if it's still unresolved at .end/EOF, finalizeAssembling reports it as an error -
-    // never as a relocation, since a plain (non-PC-relative) 12-bit value can't survive
-    // being handed off to the linker (see PatchWidth::W12_ABS).
+    // not yet defined
     symtab.getOrCreate(operand); // guarantee a table entry exists so later resolution can find it
     BackpatchEntry entry;
     entry.sectionId = sectionManager.currentSectionId();
-    entry.patchOffset = sectionManager.currentOffset(); // where THIS instruction will land once appended
+    entry.patchOffset = sectionManager.currentOffset(); // where this instruction will land once appended
     entry.width = PatchWidth::W12_ABS;
     entry.addend = sign; // sign multiplier (+1/-1), applied as sign * sym.value on resolve
     backpatch.add(operand, entry);
@@ -414,12 +386,6 @@ void Assembler::resolveDisplacement(std::string operand, int lineNum, const std:
 
 void Assembler::resolvePcRelativeOperand(const std::string& operand, int sectionId, int pc,
                                           int lineNum, const std::string& rawLine) {
-    // NOTE: every current caller (ld/st pool routing, jmp/call, and beq/bne/bgt) always passes
-    // a generated literal-pool label (e.g. "__pool3"), never a raw numeric literal - so the
-    // fast path below is currently unreachable dead code. Left commented rather than deleted,
-    // in case a future direct (non-pooled) caller wants a short-circuit for a nearby, statically
-    // known literal target without paying for a pool round-trip.
-    //
     // bool isNumber = !operand.empty() &&
     //                 ((operand[0] >= '0' && operand[0] <= '9') ||
     //                  (operand[0] == '-' && operand.size() > 1));
@@ -436,15 +402,10 @@ void Assembler::resolvePcRelativeOperand(const std::string& operand, int section
     //     return;
     // }
 
-    // Symbol operand - mirrors the same three-way split handleLabel already applies when
-    // a label gets defined, just evaluated here at reference time instead of definition time.
     if (symtab.exists(operand) && symtab.get(operand).isDefined) {
         const SymbolTableEntry& sym = symtab.get(operand);
         if (sym.sectionId == sectionId) {
-            // Same section as this instruction: displacement is fully known now. -4 because
-            // pc has already advanced past this instruction (to pc+4) by the time it reads
-            // pc as an addressing operand during its own execution - see handleLabel's
-            // matching W12_SIGNED adjustment.
+            // if its same section then displacement is already known
             int disp = sym.value - (pc + 4);
             uint8_t* patchAt = sectionManager.rawPointerAt(sectionId, pc);
             if (!encodeDisp12(patchAt, disp)) {
@@ -457,8 +418,7 @@ void Assembler::resolvePcRelativeOperand(const std::string& operand, int section
         return;
     }
 
-    // Not defined yet (forward reference, or not seen at all) - defer until the symbol is
-    // defined (handleLabel will resolve it) or, if it's .extern, until EOF (finalizeAssembling).
+    // not yet defined
     symtab.getOrCreate(operand); // guarantee a table entry exists so later resolution can find it
     BackpatchEntry entry;
     entry.sectionId = sectionId;
@@ -475,9 +435,6 @@ std::string Assembler::requestPoolSlot(const std::string& value) {
 }
 
 void Assembler::flushLiteralPool(int lineNum, const std::string& rawLine) {
-    // Copy first: handleLabel()/handleWord() below can themselves append bytes and move
-    // section state around, and neither of them touches pendingPool, but iterating a
-    // member we're about to clear is asking for trouble if that ever changes.
     std::vector<std::pair<std::string, std::string>> pool = std::move(pendingPool);
     pendingPool.clear();
 
@@ -515,10 +472,7 @@ void Assembler::routeThroughPool(const std::string& operand, bool memoryDirect, 
         return; // $symbol/$literal: the pool read above already produced the final value
     }
 
-    // Bare symbol/literal (memory-direct): the pool read only recovered the resolved
-    // address into regA, not what's stored there - dereference it with a second
-    // instruction. Same OC (ld) as the first, MOD=2, regA=regB=regA (base is now the
-    // value we just loaded), regC=r0, Disp=0 (no further offset needed).
+    // Bare symbol/literal (memory-direct)
     int regA = (instr[1] >> 4) & 0x0F;
     std::vector<uint8_t> deref = {instr[0], 0x00, 0x00, 0x00};
     patchMod(deref.data(), 2);
@@ -550,8 +504,7 @@ void Assembler::handleOneOpInstruction(const std::string& mnemonic, const std::v
     }
     std::vector<uint8_t> instr = instructionOpcodes[mnemonic];
     if (mnemonic == "not") {
-        // gpr[A] <= ~gpr[B] (OC=0110, MOD=0000). Assembly-level "not %gpr" has only one
-        // operand but reads and writes the same register, so regA and regB both need it.
+        // gpr[A] <= ~gpr[B] (OC=0110, MOD=0000)
         int regA = parseRegister(operands[0], lineNum, rawLine);
         patchRegA(instr.data(), regA);
         patchRegB(instr.data(), regA);
@@ -620,10 +573,7 @@ void Assembler::handleBranchInstruction(const std::string& mnemonic, const std::
     int pc = sectionManager.currentOffset(); // this instruction's own start offset
     sectionManager.appendBytes(instr);       // OC/MOD + regA/regB/regC written now, disp still 0
 
-    // Route through the literal pool, mirroring jmp/call: pc<=mem32[pc+D] (mod 9/10/11) reads
-    // the target's absolute address from a nearby pool word (unlimited-range R_32 relocation),
-    // instead of encoding pc<=pc+D directly - so a branch can reach anywhere in the 4GB address
-    // space, not just +-2047 bytes from the branch instruction itself.
+    // through literal pool because pc jump is absolute
     std::string literalName = requestPoolSlot(target);
     resolvePcRelativeOperand(literalName, sectionId, pc, lineNum, rawLine);
 }
@@ -668,10 +618,6 @@ void Assembler::handleLoadInstruction(const std::string& mnemonic, const std::ve
         return;
     }
     if(target[0] == '[') {
-        // Manual char-by-char scan below can walk past the end of `target` on malformed
-        // input (e.g. a missing ']') - .at() throws std::out_of_range instead of the
-        // operator[] undefined behavior that would otherwise result, and the catch below
-        // turns that into a normal AssemblerError.
         try {
             patchMod(instr.data(), 2);
             std::string regString = "";
@@ -717,14 +663,14 @@ void Assembler::handleLoadInstruction(const std::string& mnemonic, const std::ve
             throw AssemblerError("malformed addressing operand: '" + target + "'", lineNum, rawLine);
         }
     }
-    // $literal / $symbol -> immediate, always via the literal pool (see routeThroughPool -
-    // it patches MOD/regB/regC itself, unconditionally).
+    // $literal / $symbol -> immediate, always via the literal pool
     if(target[0] == '$') {
         std::string operandString = target.substr(1);
         routeThroughPool(operandString, /*memoryDirect=*/false, instr, lineNum, rawLine);
         return;
     }
     // bare literal / symbol -> memory-direct, always via the literal pool (see routeThroughPool).
+    // this will result in two load instructions
     std::string operandString = target;
     routeThroughPool(operandString, /*memoryDirect=*/true, instr, lineNum, rawLine);
 }
@@ -744,8 +690,6 @@ void Assembler::handleStoreInstruction(const std::string& mnemonic, const std::v
     patchRegC(instr.data(), regSrc);
     patchRegA(instr.data(), 0);
     if(target[0] == '[') {
-        // See the identical try/catch in handleLoadInstruction: .at() turns a malformed
-        // (e.g. missing ']') operand into a catchable std::out_of_range instead of UB.
         try {
             patchMod(instr.data(), 0);
             std::string regString = "";
@@ -792,13 +736,8 @@ void Assembler::handleStoreInstruction(const std::string& mnemonic, const std::v
         }
     }
     patchRegB(instr.data(), 0);
-    // Bare literal or symbol as a store target: always routes through the literal pool,
-    // even when a literal would fit directly in the 12-bit Disp field - st never uses
-    // MOD=0000 (direct) here, only MOD=0010 (pool), for both literals and symbols alike.
-    // Unlike ld, st's own MOD=0010 is a NATIVE double dereference
-    // (mem32[mem32[gpr[A]+gpr[B]+D]]<=gpr[C]), so this needs only ONE instruction - and
-    // regC (already regSrc, set above) must stay untouched, since it's the value being
-    // written, not scratch space for the address lookup.
+    // also goes through literal pool but st has mem[mem[something]] so it results in one instruction
+    // (unlike ld for memdir)
     patchMod(instr.data(), 2);
     patchRegA(instr.data(), 15); // pc (regB is already r0 from above)
 
@@ -835,6 +774,7 @@ void Assembler::handleCsrInstruction(const std::string& mnemonic, const std::vec
     sectionManager.appendBytes(instr);
 }
 
+// classic dispatcher
 void Assembler::dispatchInstruction(const std::string& mnemonic, const std::vector<std::string>& operands,
                                      int lineNum, const std::string& rawLine) {
     auto it = kMnemonicShapes.find(mnemonic);
@@ -886,21 +826,14 @@ void Assembler::finalizeAssembling(int lineNum, const std::string& rawLine) {
     finalizeRelocations(lineNum, rawLine);
 }
 
-// Runs once, after every symbol's final bind is settled (a .global can appear anywhere in
-// the file, even after a symbol was already used in a relocation, so this can't be decided
-// at the point each relocation is first created - see the declaration in assembler.hpp).
+// only runs once
 void Assembler::finalizeRelocations(int lineNum, const std::string& rawLine) {
     for (RelocationTableEntry& r : relocs) {
         const SymbolTableEntry& sym = symtab.getByNum(r.symbolId);
         if (sym.bind == SymbolBind::LOCAL) {
-            // A LOCAL symbol reached via the backpatch table is already guaranteed defined
-            // here (see the remaining-backpatch-names check above) - but .word's relocation
-            // is emitted directly (addRelocationOrBackpatch never touches backpatch at all),
-            // so a symbol referenced ONLY via .word and never a label/.global/.extern slips
-            // past that check entirely. Catch it here instead of letting sectionId stay -1
-            // and crash getById() with an unhandled std::out_of_range.
+            // if a symbol is LOCAL it must be defined, else this is a error
             if (!sym.isDefined) {
-                throw AssemblerError("nedefinisan simbol: " + sym.name, lineNum, rawLine);
+                throw AssemblerError("undefined symbol: " + sym.name, lineNum, rawLine);
             }
             const SectionData& sec = sectionManager.getById(sym.sectionId);
             const SymbolTableEntry& sectionSym = symtab.get(sec.name);
@@ -910,9 +843,9 @@ void Assembler::finalizeRelocations(int lineNum, const std::string& rawLine) {
     }
 }
 
-// ============================================================
-// Serialization (TODO - fill in according to the agreed-upon format)
-// ============================================================
+// ==============================================================
+// Serialization 
+// ==============================================================
 
 void Assembler::writeObjectFile(const std::string& outputPath) const {
     std::ofstream out(outputPath);
@@ -949,7 +882,7 @@ void Assembler::writeObjectFile(const std::string& outputPath) const {
     for (const auto& secName : sectionManager.order()) {
         const SectionData& sec = sectionManager.get(secName);
         out << "#" << sec.name << "\n";
-        int dataLen = static_cast<int>(sec.data.size()); // vector::size() is size_t, narrowed once here
+        int dataLen = static_cast<int>(sec.data.size());
         for (int i = 0; i < dataLen; i++) {
             char buf[4];
             std::snprintf(buf, sizeof(buf), "%02X", sec.data[i]);
@@ -992,13 +925,10 @@ void Assembler::writeBinaryObjectFile(const std::string& outputPath) const {
     int sectabCount = static_cast<int>(sectionNames.size());
     int reltabOffset = sectabOffset + sectabCount * SECTAB_SIZE;
     int reltabCount = static_cast<int>(reltab.size());
-    // Raw section data lives right after the relocation table, and the string pool comes
-    // after THAT (its own offset is computed once we know the total data size below) -
-    // there is no room for raw section bytes if the string pool started here instead.
+    // first comes raw data, after comes string pool
     int dataRegionOffset = reltabOffset + reltabCount * RELTAB_SIZE;
 
-    // populate string pool (deduplicated: a section name and a symbol name that happen to
-    // be equal, or a name used twice, share a single string-pool entry)
+    // populate string pool (without duplicates)
     int currentStringOffset = 0;
     std::vector<StringPoolEntry> stringPool;
     std::unordered_map<std::string, int> stringContained;
@@ -1030,9 +960,6 @@ void Assembler::writeBinaryObjectFile(const std::string& outputPath) const {
         binarySymTab.push_back(bste);
     }
 
-    // Section records: dataOffset is filled in as we go, tracking a running offset through
-    // the raw-data region - the same order this loop visits sections in is the order the
-    // raw bytes get written in further down, so the two stay consistent.
     std::vector<BinarySectionTableEntry> binarySecTab;
     int currentDataOffset = dataRegionOffset;
     for (const std::string& sectionName : sectionNames) {

@@ -15,10 +15,7 @@ Terminal::Terminal() {
 
 Terminal::~Terminal() {
     stopRequested.store(true, std::memory_order_relaxed);
-    // read() below is a blocking syscall with no portable way to interrupt short of closing
-    // stdin or signaling the thread - the emulator only ever exits after halt, and any
-    // keystroke still sitting in that blocking read at exit time is harmless to discard, so
-    // detach rather than join to avoid hanging process exit on a read() that may never return.
+    // read is blocking, so we can't join the thread, just detach it and let it exit on its own
     reader.detach();
     tcsetattr(STDIN_FILENO, TCSANOW, &originalTermios);
 }

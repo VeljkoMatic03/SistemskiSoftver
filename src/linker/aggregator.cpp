@@ -7,10 +7,7 @@
 
 namespace {
 
-// Absorbs one already-read file into the growing AggregatedState: appends its section bytes,
-// merges its GLOBAL symbol definitions, and resolves every one of its relocations. Sections
-// are processed first, unconditionally, since every symbol/relocation lookup below depends on
-// this file's own section shifts being fully known before anything else can be resolved.
+// makes AggregatedState out of already read files
 void absorbFile(const ParsedObjectFile& file, AggregatedState& state) {
     std::unordered_map<int, SectionTranslation> translation; // local section num -> translation
 
@@ -38,8 +35,7 @@ void absorbFile(const ParsedObjectFile& file, AggregatedState& state) {
         translation[sec.num] = SectionTranslation{globalSectionId, shiftAmount};
     }
 
-    // Then symbols - only real GLOBAL user symbols (type SYM or UND) go into state.symbols;
-    // SEC entries and LOCAL-bind symbols are never needed there (see linker_types.hpp).
+    // basically populate table of global symbols
     for (const SymbolTableEntry& sym : file.symbols) {
         if (sym.type == SymbolType::SEC) continue;
         if (sym.bind != SymbolBind::GLOBAL) continue;
@@ -61,7 +57,7 @@ void absorbFile(const ParsedObjectFile& file, AggregatedState& state) {
         }
     }
 
-    // Then relocations - this file's section shifts and merged symbols are both available now.
+    // for relocations this is where the ultimate offset is computed
     for (const RelocationTableEntry& r : file.relocations) {
         auto symbolIter = file.symbolByNum.find(r.symbolId);
         if (symbolIter == file.symbolByNum.end()) {
@@ -101,7 +97,7 @@ void absorbFile(const ParsedObjectFile& file, AggregatedState& state) {
     }
 }
 
-} // namespace
+} 
 
 AggregatedState aggregate(const std::vector<std::string>& inputPaths) {
     AggregatedState state;

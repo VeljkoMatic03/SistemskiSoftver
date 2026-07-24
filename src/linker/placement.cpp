@@ -8,15 +8,12 @@
 
 namespace {
 
-// Addresses are stored as `int` (project convention) but represent full 32-bit values - e.g.
-// the spec's own worked example places a section at 0xC0000000, which is negative as a signed
-// int32. Every comparison/arithmetic op on an address must go through this cast, or ordering
-// and overlap checks silently break above the 0x80000000 boundary.
+// addresses are unsigned
 uint32_t u32(int value) {
     return static_cast<uint32_t>(value);
 }
 
-} // namespace
+}
 
 void assignBaseAddresses(AggregatedState& state, const LinkerOptions& opts) {
     if (!opts.hex) {
@@ -47,8 +44,7 @@ void assignBaseAddresses(AggregatedState& state, const LinkerOptions& opts) {
         if (end > nextFree) nextFree = end;
     }
 
-    // state.sections is indexed by GlobalSection::id (assigned = size() at creation time), so
-    // walking the vector in order IS walking in first-appearance order - no extra sort needed.
+    // sections are enumerated from 0 onwards
     for (int i = 0; i < sectionCount; i++) {
         if (placed[i]) continue;
         state.sections[i].baseAddress = static_cast<int>(nextFree);

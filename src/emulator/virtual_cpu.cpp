@@ -5,8 +5,8 @@
 namespace {
 constexpr uint32_t TERM_OUT_ADDR = 0xFFFFFF00u;
 constexpr uint32_t TERM_IN_ADDR = 0xFFFFFF04u;
-constexpr uint32_t TIM_CFG_ADDR = 0xFFFFFF10u;
-} // namespace
+constexpr uint32_t TIM_CFG_ADDR = 0xFFFFFF10u; // relic of previous ambition to fullfill C phase spec
+}
 
 VirtualCPU::VirtualCPU() {
     for (int i = 0; i < 16; i++) {
@@ -16,7 +16,7 @@ VirtualCPU::VirtualCPU() {
         controlRegisters[i] = 0;
     }
     ir = 0;
-    pc = 0x40000000; // cold/warm reset entry point, per spec
+    pc = 0x40000000; // default entry point
 }
 
 uint32_t VirtualCPU::getGpr(int index) const {
@@ -25,7 +25,7 @@ uint32_t VirtualCPU::getGpr(int index) const {
 
 void VirtualCPU::setGpr(int index, uint32_t value) {
     if (index == 0) {
-        return; // r0 is hardwired to zero - writes are discarded, not stored-then-masked
+        return; // r0 is hardwired to zero
     }
     registerFile[index] = value;
 }
@@ -51,7 +51,7 @@ uint32_t VirtualCPU::readMmio(uint32_t addr) const {
     if (addr == TERM_OUT_ADDR) return termOut;
     if (addr == TERM_IN_ADDR) return termIn;
     if (addr == TIM_CFG_ADDR) return timCfg;
-    return 0; // rest of the reserved 256 bytes has no defined register - reads as zero
+    return 0; // rest of the reserved 256 bytes has no defined register
 }
 
 void VirtualCPU::writeMmio(uint32_t addr, uint32_t value) {
@@ -69,14 +69,11 @@ void VirtualCPU::writeMmio(uint32_t addr, uint32_t value) {
         timCfg = value & 0x7;
         return;
     }
-    // rest of the reserved 256 bytes has no defined register - write is a no-op
+    // rest of the reserved 256 bytes has no defined register, no-op
 }
 
 uint32_t VirtualCPU::readWord(uint32_t addr) const {
-    // A word access starting just below MMIO_BASE and straddling into the reserved region
-    // would incorrectly read a couple of its bytes as plain memory instead of MMIO - not
-    // handled here, since no realistic test program misaligns an access onto that boundary
-    // on purpose and the spec gives no guidance on it either way.
+    // if above MMIO_BASE then read mmapped registers
     if (addr >= MMIO_BASE) {
         return readMmio(addr);
     }
@@ -99,7 +96,7 @@ void VirtualCPU::writeWord(uint32_t addr, uint32_t value) {
 
 void VirtualCPU::readInstruction() {
     ir = readWord(pc);
-    pc += 4; // must happen before execute - call/int push this as the return address
+    pc += 4;
 }
 
 void VirtualCPU::decodeInstruction() {
@@ -117,10 +114,11 @@ void VirtualCPU::decodeInstruction() {
 
 namespace {
 bool isValidCsrIndex(uint8_t index) {
-    return index <= 2; // 0=status, 1=handler, 2=cause - anything else has no defined register
+    return index <= 2; // 0,1,2 valid indexes
 }
-} // namespace
+}
 
+// dispatch to proper handlers
 CPUState VirtualCPU::executeInstruction() {
     switch (instruction.opcode) {
         case 0x0: return executeHalt();
@@ -173,7 +171,7 @@ CPUState VirtualCPU::executeSoftwareInterrupt() {
     if (instruction.mode != 0x0) {
         return CPUState::ILLEGAL;
     }
-    enterInterrupt(4); // cause = software interrupt
+    enterInterrupt(4); // cause is software interrupt
     return CPUState::CONTINUE;
 }
 
@@ -271,7 +269,7 @@ CPUState VirtualCPU::executeLogic() {
 
 CPUState VirtualCPU::executeShift() {
     uint32_t b = getGpr(instruction.regB);
-    // count masked to 0-31: an unmasked native '<<'/'>>' by >=32 is undefined behavior.
+    // '<<'/'>>' by >=32 is undefined behavior.
     uint32_t amount = getGpr(instruction.regC) & 0x1F;
     uint32_t result;
     switch (instruction.mode) {
@@ -300,8 +298,6 @@ CPUState VirtualCPU::executeStore() {
             return CPUState::CONTINUE;
         }
         case 0x1: {
-            // gpr[A]<=gpr[A]+D THEN mem32[gpr[A]]<=gpr[C] - increment happens first, store
-            // uses the already-updated A (this is what "push %gpr" compiles to).
             uint32_t newA = getGpr(instruction.regA) + static_cast<uint32_t>(instruction.displ);
             setGpr(instruction.regA, newA);
             writeWord(newA, c);
@@ -330,8 +326,7 @@ CPUState VirtualCPU::executeLoad() {
             return CPUState::CONTINUE;
         }
         case 0x3: {
-            // gpr[A]<=mem32[gpr[B]] THEN gpr[B]<=gpr[B]+D (load happens first, unlike the
-            // store/push case above) - cache the old B so this is correct even if A==B.
+            // gpr[A]<=mem32[gpr[B]], gpr[B]<=gpr[B]+D
             uint32_t oldB = getGpr(instruction.regB);
             uint32_t value = readWord(oldB);
             setGpr(instruction.regA, value);

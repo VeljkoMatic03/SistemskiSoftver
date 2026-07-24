@@ -7,7 +7,6 @@
 
 #include "utils/structs.hpp"
 
-// Holds all symbols of the assembled file. Key is the symbol name (unique within the file).
 // num=0 is reserved for the UND (undefined) placeholder symbol, real symbols start at 1.
 class SymbolTable {
 public:

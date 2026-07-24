@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
     }
 
     if (inputPath.empty()) {
-        std::cerr << "upotreba: asembler [-o izlazna_datoteka] ulazna_datoteka\n";
+        std::cerr << "format: assembler [-o output_file] input_file\n";
         return 1;
     }
 
@@ -28,9 +28,9 @@ int main(int argc, char** argv) {
         assembler.writeObjectFile(outputPath);
         assembler.writeBinaryObjectFile(outputPath + ".bin");
     } catch (const AssemblerError& e) {
-        std::cerr << "Greska";
+        std::cerr << "Error";
         if (e.line >= 0) {
-            std::cerr << " (linija " << e.line << ")";
+            std::cerr << " (line " << e.line << ")";
         }
         std::cerr << ": " << e.what() << "\n";
         if (!e.lineText.empty()) {

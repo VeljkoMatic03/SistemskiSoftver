@@ -10,9 +10,6 @@
 #include "common/errors.hpp"
 #include "utils/structs.hpp"
 
-// BinarySymbolTableEntry/BinarySectionTableEntry/BinaryRelocationTableEntry and their size
-// constants (HEADER_SIZE/SYMTAB_SIZE/SECTAB_SIZE/RELTAB_SIZE) live in utils/structs.hpp, shared
-// with the assembler's own writer - reused here as-is rather than re-declared locally.
 namespace {
 
 struct StringPoolEntry {
@@ -26,7 +23,7 @@ void writeWord(int value, std::ofstream& out) {
     out.write(reinterpret_cast<const char*>(bytes), 4);
 }
 
-} // namespace
+}
 
 void writeRelocatableObjectFile(const AggregatedState& state, const std::string& outputPath) {
     // header
@@ -74,9 +71,6 @@ void writeRelocatableObjectFile(const AggregatedState& state, const std::string&
         binarySymTab.push_back(bste);
     }
 
-    // real GLOBAL symbols (defined or still-undefined - -relocatable never requires full
-    // resolution), numbered right after the sections. symbolNumByName records each one's
-    // assigned num for the reltab pass below, since GlobalSymbol carries no num of its own.
     std::unordered_map<std::string, int> symbolNumByName;
     int runningIndex = 0;
     for (const auto& kv : state.symbols) {
@@ -179,9 +173,6 @@ void writeRelocatableObjectFile(const AggregatedState& state, const std::string&
     }
 }
 
-// Same #SYMTAB/#SECTIONS/#RELOCATIONS/#DATA shape as Assembler::writeObjectFile - rebuilds the
-// same joint symtab (SEC entries first, then real GLOBAL symbols) as writeRelocatableObjectFile
-// above, just formatted as text instead of packed into binary records.
 void writeRelocatableObjectFileText(const AggregatedState& state, const std::string& outputPath) {
     std::ofstream out(outputPath);
     if (!out.is_open()) {

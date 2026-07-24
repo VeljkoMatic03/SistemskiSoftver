@@ -7,9 +7,7 @@
 
 #include "utils/structs.hpp"
 
-// One fully-parsed input .o (binary) file, before any aggregation/linking - exactly what
-// readBinaryObjectFile produces. Everything here is still in this file's own local terms
-// (symbol nums, section ids) - nothing has been merged with any other input file yet.
+// result of parsing one .o file (everything in one place)
 struct ParsedObjectFile {
     std::string path;
     std::vector<SymbolTableEntry> symbols;
@@ -20,28 +18,26 @@ struct ParsedObjectFile {
     std::vector<RelocationTableEntry> relocations;
 };
 
-// A section in the linker's merged, cross-file address space - same-named sections from
-// different input files are concatenated into one of these, in command-line order.
+// every section is global, just an upgrade on normal section struct
 struct GlobalSection {
     std::string name;
     int id = -1;                  // order of first appearance across all input files
     std::vector<uint8_t> data;      // concatenation of every contributing file's bytes, in order
-    int baseAddress = 0;             // filled in during placement (step 3)
+    int baseAddress = 0;             // filled in during placement
 };
 
-// A real user GLOBAL symbol (type SYM or UND, never SEC - see object_reader.cpp/aggregator.cpp
-// for why SEC entries never reach this map at all).
+// only for global symbols (sections don't count)
 struct GlobalSymbol {
     std::string name;
     bool defined = false;
     int definingSectionGlobalId = -1;
-    int value = 0;           // shifted offset within that global section, valid iff defined
-    int finalValue = 0;       // filled in during step 4 (computeFinalValues), -hex only
+    int value = 0;           // shifted offset within that global section, valid only if defined
+    int finalValue = 0;       // filled in during step:computeFinalValues, -hex only
     std::vector<std::string> definedInFiles; // for the multiply-defined error message
 };
 
-// (fileIndex-local) section id -> its global identity + the shift THIS file's own bytes
-// incurred by landing after whatever was already in that global section.
+// (fileIndex-local) section id -> its global identity + the shift this file's own bytes
+// incurred by landing after whatever was already in that global section
 struct SectionTranslation {
     int globalSectionId = -1;
     int shiftAmount = 0;
@@ -77,11 +73,11 @@ struct LinkerOptions {
     std::vector<PlaceOption> placements;
 };
 
-// Everything produced by aggregating every input file, in command-line order (step 1).
+// everything produced by aggregating every input file, in command-line order
 struct AggregatedState {
     std::vector<GlobalSection> sections;
     std::unordered_map<std::string, int> sectionIdByName;
-    std::unordered_map<std::string, GlobalSymbol> symbols;  // real user GLOBAL symbols only
+    std::unordered_map<std::string, GlobalSymbol> symbols;  // real user global symbols only
     std::vector<LinkedRelocation> linkedRelocations;
 };
 

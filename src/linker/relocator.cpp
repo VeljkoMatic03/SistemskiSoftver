@@ -14,10 +14,7 @@ void computeFinalValues(AggregatedState& state) {
 void applyRelocations(AggregatedState& state) {
     auto& sectionsVector = state.sections;
     for(auto& lr : state.linkedRelocations) {
-        // The assembler never emits anything but R_32 (see resolvePcRelativeOperand/relocateEntry -
-        // every PC-relative target is now routed through the literal pool as a plain absolute
-        // word). R_PC12S patching is deliberately not implemented - fail loudly instead of
-        // silently mispatching if one ever shows up.
+        // relocation type is always R_32, fail if otherwise
         if (lr.type != RelocationType::R_32) {
             throw LinkerError("R_PC12S relocation patching is not implemented");
         }
